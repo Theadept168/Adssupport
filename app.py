@@ -139,21 +139,39 @@ EDGE_VOICES = {
     "French - Female (Denise Neural)": "fr-FR-DeniseNeural",
 }
 
+VOICE_BUTTON_OPTIONS = [
+    "🎭 Auto (Piseth 👨 / Sreymom 👩)",
+    "👨 Piseth (ប្រុស / Boy)",
+    "👩 Sreymom (ស្រី / Girl)",
+]
+VOICE_BUTTON_MAP = {
+    "🎭 Auto (Piseth 👨 / Sreymom 👩)": "auto_detect",
+    "👨 Piseth (ប្រុស / Boy)": "km-KH-PisethNeural",
+    "👩 Sreymom (ស្រី / Girl)": "km-KH-SreymomNeural",
+}
+
 
 def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
     if len(samples) == 0:
         return 140.0
-    frame_len = int(sample_rate * 0.05)  # 50ms window
-    hop_len = int(sample_rate * 0.025)   # 25ms step
-    min_lag = int(sample_rate / 350)     # ~350 Hz max human speech F0
-    max_lag = int(sample_rate / 75)      # ~75 Hz min human speech F0
+    frame_len = int(sample_rate * 0.05)  # 50ms window = 800 samples
+    hop_len = int(sample_rate * 0.025)   # 25ms step = 400 samples
+    min_lag = int(sample_rate / 350)     # ~350 Hz max human speech F0 (~45 samples)
+    max_lag = int(sample_rate / 75)      # ~75 Hz min human speech F0 (~213 samples)
     pitches = []
 
-    max_samples = min(len(samples) - frame_len, sample_rate * 45)  # analyze up to 45s
-    for i in range(0, max(0, max_samples), hop_len):
+    # Adaptive energy threshold to detect voiced frames even on quiet speech
+    mean_energy = float(np.mean(samples**2)) if len(samples) > 0 else 0.0
+    energy_thresh = max(25.0, mean_energy * 0.08)
+
+    max_samples = min(len(samples) - frame_len, sample_rate * 45)
+    if max_samples <= 0:
+        return 140.0
+
+    for i in range(0, max_samples, hop_len):
         frame = samples[i:i + frame_len]
         energy = np.mean(frame**2)
-        if energy < 150:  # silence / background noise
+        if energy < energy_thresh:
             continue
         frame_norm = frame - np.mean(frame)
         corr = np.correlate(frame_norm, frame_norm, mode='full')
@@ -162,7 +180,7 @@ def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
             peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
             peak_val = corr[peak_lag]
             zero_lag = corr[0]
-            if zero_lag > 0 and (peak_val / zero_lag) > 0.28:  # Voiced frame threshold
+            if zero_lag > 0 and (peak_val / zero_lag) > 0.22:  # Voiced frame threshold
                 f0 = sample_rate / peak_lag
                 if 75 <= f0 <= 350:
                     pitches.append(f0)
@@ -181,12 +199,17 @@ def detect_voice_piseth_sreymom(media_path: str = None, audio_segment: AudioSegm
                     "icon": "👨",
                 }
             audio_segment = AudioSegment.from_file(media_path)
+            # For whole media file, inspect first 60 seconds
+            inspect_clip = audio_segment[:60000]
+        else:
+            inspect_clip = audio_segment
 
         # Normalize to 16kHz mono for pitch estimation
-        audio_16k = audio_segment[:60000].set_channels(1).set_frame_rate(16000)
+        audio_16k = inspect_clip.set_channels(1).set_frame_rate(16000)
         samples = np.array(audio_16k.get_array_of_samples(), dtype=np.float32)
         f0 = estimate_pitch_f0(samples, 16000)
 
+        # Male fundamental frequency typically 85-155 Hz, Female 165-255 Hz
         if f0 < 165.0:
             return {
                 "voice": "km-KH-PisethNeural",
@@ -270,6 +293,58 @@ def render_srt(subtitles: list[Subtitle]) -> str:
         f"{position}\n{format_timestamp(item.start)} --> {format_timestamp(item.end)}\n{item.text}"
         for position, item in enumerate(subtitles, 1)
     ) + "\n"
+
+
+def classify_all_segments_piseth_sreymom(
+    subtitles: list[Subtitle],
+    media_path: str = None,
+    audio_full: AudioSegment = None,
+) -> dict[int, dict]:
+    """
+    Analyzes each subtitle segment's audio to detect whether the character speaking
+    is Male (Piseth) or Female (Sreymom).
+    Returns dict mapping: subtitle.index -> {
+        "voice": "km-KH-PisethNeural" or "km-KH-SreymomNeural",
+        "gender": "Male" | "Female",
+        "name": "Piseth Neural (Male)" | "Sreymom Neural (Female)",
+        "icon": "👨" | "👩",
+        "pitch": f0
+    }
+    """
+    if not subtitles:
+        return {}
+
+    if audio_full is None:
+        if not media_path or not Path(media_path).exists():
+            return {}
+        try:
+            audio_full = AudioSegment.from_file(media_path)
+        except Exception:
+            return {}
+
+    # Global fallback if a segment is too short or quiet
+    global_info = detect_voice_piseth_sreymom(audio_segment=audio_full[:60000])
+    fallback_info = global_info if global_info else {
+        "voice": "km-KH-PisethNeural",
+        "gender": "Male",
+        "name": "Piseth Neural (Male)",
+        "pitch": 130.0,
+        "icon": "👨",
+    }
+
+    results = {}
+    for sub in subtitles:
+        start_ms = max(0, sub.start)
+        end_ms = min(len(audio_full), sub.end)
+        clip_len = end_ms - start_ms
+        if clip_len >= 180:
+            clip = audio_full[start_ms:end_ms]
+            info = detect_voice_piseth_sreymom(audio_segment=clip)
+            results[sub.index] = info
+        else:
+            results[sub.index] = fallback_info
+
+    return results
 
 
 # ==========================================
@@ -683,17 +758,37 @@ def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, sp
     output = AudioSegment.silent(duration=0)
     total = len(subtitles)
 
+    # Preload media audio for character voice detection when auto_detect is chosen
+    media_audio = None
+    if voice == "auto_detect" and st.session_state.get("uploaded_media_path"):
+        media_p = Path(st.session_state.uploaded_media_path)
+        if media_p.exists():
+            try:
+                media_audio = AudioSegment.from_file(str(media_p))
+            except Exception:
+                media_audio = None
+
     for i, item in enumerate(subtitles):
         target_start = item.start
         if len(output) < target_start:
             output += AudioSegment.silent(duration=target_start - len(output))
 
-        # Check line-specific voice or fallback to general/auto-detected voice
+        # Check line-specific voice or fallback to character auto-detection (Piseth / Sreymom)
         line_voice = st.session_state.get("subtitle_voices", {}).get(item.index) or getattr(item, "voice", "")
         if not line_voice:
             if voice == "auto_detect":
-                detected = st.session_state.get("detected_voice_info", {})
-                line_voice = detected.get("voice", "km-KH-PisethNeural")
+                # Per-character voice detection dynamically from media audio clip
+                if media_audio is not None and (item.end - item.start) >= 180:
+                    try:
+                        clip = media_audio[max(0, item.start):min(len(media_audio), item.end)]
+                        seg_det = detect_voice_piseth_sreymom(audio_segment=clip)
+                        line_voice = seg_det.get("voice", "km-KH-PisethNeural")
+                        st.session_state.setdefault("subtitle_voices", {})[item.index] = line_voice
+                    except Exception:
+                        line_voice = ""
+                if not line_voice:
+                    detected = st.session_state.get("detected_voice_info", {})
+                    line_voice = detected.get("voice", "km-KH-PisethNeural")
             else:
                 line_voice = voice
 
@@ -706,7 +801,11 @@ def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, sp
             output += AudioSegment.silent(duration=line_duration)
 
         if progress_callback:
-            progress_callback(i + 1, total)
+            line_tag = "👨 Piseth" if "Piseth" in line_voice else ("👩 Sreymom" if "Sreymom" in line_voice else line_voice)
+            try:
+                progress_callback(i + 1, total, line_tag)
+            except TypeError:
+                progress_callback(i + 1, total)
 
     wav_file = io.BytesIO()
     output.export(wav_file, format="wav")
@@ -1014,6 +1113,36 @@ st.markdown(
     }
     .stButton > button:active {
         transform: scale(0.98);
+    }
+
+    /* Modern Responsive Pills & Segmented Voice Buttons */
+    div[data-testid="stPills"], div[data-testid="stSegmentedControl"] {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        margin: 4px 0 6px 0 !important;
+    }
+    div[data-testid="stPills"] button, div[data-testid="stSegmentedControl"] button {
+        min-height: 42px !important;
+        padding: 0.45rem 1rem !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        background: rgba(30, 41, 59, 0.75) !important;
+        color: #e2e8f0 !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+    div[data-testid="stPills"] button:hover, div[data-testid="stSegmentedControl"] button:hover {
+        border-color: rgba(56, 189, 248, 0.4) !important;
+        background: rgba(30, 41, 59, 0.95) !important;
+    }
+    div[data-testid="stPills"] button[aria-selected="true"], div[data-testid="stSegmentedControl"] button[aria-selected="true"] {
+        background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%) !important;
+        color: #ffffff !important;
+        border-color: #38bdf8 !important;
+        box-shadow: 0 2px 10px rgba(56, 189, 248, 0.35) !important;
+        font-weight: 700 !important;
     }
 
     /* Mobile Responsive Tab Navigation */
@@ -1505,6 +1634,12 @@ if "detected_voice_info" not in st.session_state:
     st.session_state.detected_voice_info = None
 if "subtitle_voices" not in st.session_state:
     st.session_state.subtitle_voices = {}
+if "chosen_voice" not in st.session_state:
+    st.session_state.chosen_voice = "auto_detect"
+if "voice_btn_selection" not in st.session_state or st.session_state.voice_btn_selection not in VOICE_BUTTON_OPTIONS:
+    st.session_state.voice_btn_selection = "🎭 Auto (Piseth 👨 / Sreymom 👩)"
+if "voice_gender_counts" not in st.session_state:
+    st.session_state.voice_gender_counts = {"male": 0, "female": 0}
 
 # ==========================================
 # Sidebar: Settings & Configuration
@@ -1677,14 +1812,50 @@ with st.sidebar:
     )
     
     if tts_engine == "Microsoft Edge Neural":
-        voice_selection = st.selectbox("Neural Voice", list(EDGE_VOICES.keys()), index=0)
-        chosen_voice = EDGE_VOICES[voice_selection]
+        st.markdown("**Voice Selection (1-Click Buttons):**")
+        cur_sb_v = st.session_state.get("voice_btn_selection", "🎭 Auto (Piseth 👨 / Sreymom 👩)")
+        if cur_sb_v not in VOICE_BUTTON_OPTIONS:
+            cur_sb_v = "🎭 Auto (Piseth 👨 / Sreymom 👩)"
+
+        sb_voice_choice = st.pills(
+            "Speaker Voice",
+            options=VOICE_BUTTON_OPTIONS,
+            default=cur_sb_v,
+            key="sb_voice_pills",
+            label_visibility="collapsed",
+        )
+        if sb_voice_choice:
+            st.session_state.voice_btn_selection = sb_voice_choice
+            st.session_state.chosen_voice = VOICE_BUTTON_MAP[sb_voice_choice]
+            chosen_voice = st.session_state.chosen_voice
+        else:
+            chosen_voice = st.session_state.get("chosen_voice", "auto_detect")
+
         if chosen_voice == "auto_detect":
-            det_sb = st.session_state.get("detected_voice_info")
-            if det_sb:
-                st.caption(f"🎯 Current Auto-Detect: **{det_sb.get('icon', '🎙️')} {det_sb.get('name', 'Piseth Neural')}** ({det_sb.get('pitch', 130)} Hz)")
+            vg = st.session_state.get("voice_gender_counts", {})
+            m_c = vg.get("male", 0)
+            f_c = vg.get("female", 0)
+            if m_c or f_c:
+                st.caption(f"🎭 Auto-Detected: **{m_c} 👨 Piseth (ប្រុស)** • **{f_c} 👩 Sreymom (ស្រី)**")
             else:
-                st.caption("🎯 Auto-Detect: Analyzes audio pitch (Piseth 👨 / Sreymom 👩)")
+                det_sb = st.session_state.get("detected_voice_info")
+                if det_sb:
+                    st.caption(f"🎯 Default: **{det_sb.get('icon', '🎙️')} {det_sb.get('name', 'Piseth Neural')}** ({det_sb.get('pitch', 130)} Hz)")
+                else:
+                    st.caption("🎯 Auto-Detect: ចាប់សម្លេងតួអង្គប្រុស (Piseth 👨) ឬ ស្រី (Sreymom 👩)")
+        elif chosen_voice == "km-KH-PisethNeural":
+            st.caption("👨 Selected: **Piseth Neural** (Khmer Male / ប្រុស)")
+        elif chosen_voice == "km-KH-SreymomNeural":
+            st.caption("👩 Selected: **Sreymom Neural** (Khmer Female / ស្រី)")
+
+        with st.expander("🌐 More International Voices"):
+            more_voices = [k for k in EDGE_VOICES.keys() if k not in VOICE_BUTTON_OPTIONS]
+            more_selection = st.selectbox("Other Languages", more_voices, index=0, key="sb_other_voices")
+            if st.button("Apply Voice", key="btn_apply_other_voice", use_container_width=True):
+                chosen_voice = EDGE_VOICES[more_selection]
+                st.session_state.chosen_voice = chosen_voice
+                st.session_state.voice_btn_selection = more_selection
+                st.rerun()
     elif tts_engine == "ElevenLabs API":
         chosen_voice = st.text_input("ElevenLabs Voice ID", value="21m00Tcm4TlvDq8ikWAM", help="e.g. Rachel, Adam")
     else:
@@ -1859,6 +2030,52 @@ with tab_transcribe:
             value=True,
             help=f"Full pipeline: Transcribes -> Auto-translates to Khmer -> Auto-synthesizes voice-over ({tts_engine}).",
         )
+        if auto_voiceover:
+            st.markdown(
+                """
+                <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 10px 14px; margin: 6px 0 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
+                        <span style="font-weight: 700; color: #f8fafc; font-size: 0.90rem;">🎙️ Select Voice: Auto, Piseth, or Sreymom</span>
+                        <span style="font-size: 0.70rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 7px; border-radius: 6px; font-weight: 600;">1-Click Buttons</span>
+                    </div>
+                    <p style="font-size: 0.74rem; color: #94a3b8; margin: 0 0 8px 0;">Tap to select whether to auto-detect speaker pitch (Boy/Girl) or force Piseth or Sreymom.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            t1_cur_voice = st.session_state.get("voice_btn_selection", "🎭 Auto (Piseth 👨 / Sreymom 👩)")
+            if t1_cur_voice not in VOICE_BUTTON_OPTIONS:
+                t1_cur_voice = "🎭 Auto (Piseth 👨 / Sreymom 👩)"
+
+            t1_voice_choice = st.pills(
+                "Voice-Over Speaker",
+                options=VOICE_BUTTON_OPTIONS,
+                default=t1_cur_voice,
+                key="t1_voice_pills",
+                label_visibility="collapsed",
+            )
+            if t1_voice_choice:
+                st.session_state.voice_btn_selection = t1_voice_choice
+                st.session_state.chosen_voice = VOICE_BUTTON_MAP[t1_voice_choice]
+
+            active_t1_voice = st.session_state.get("chosen_voice", "auto_detect")
+            if active_t1_voice == "auto_detect":
+                vg = st.session_state.get("voice_gender_counts", {})
+                m_c = vg.get("male", 0)
+                f_c = vg.get("female", 0)
+                if m_c or f_c:
+                    st.caption(f"🎭 Auto Character Detection: **{m_c} 👨 Piseth (ប្រុស)** • **{f_c} 👩 Sreymom (ស្រី)**")
+                else:
+                    det = st.session_state.get("detected_voice_info")
+                    if det:
+                        st.caption(f"🎯 Default: **{det.get('icon', '🎙️')} {det.get('name', 'Piseth Neural')}** ({det.get('pitch', 130)} Hz)")
+                    else:
+                        st.caption("🎭 ចាប់សម្លេងតួអង្គស្វ័យប្រវត្តិ (Boy/Male <165Hz ➔ Piseth, Girl/Female ≥165Hz ➔ Sreymom)")
+            elif active_t1_voice == "km-KH-PisethNeural":
+                st.caption("👨 Active Voice: **Piseth Neural** (Khmer Male Voice / ប្រុស)")
+            elif active_t1_voice == "km-KH-SreymomNeural":
+                st.caption("👩 Active Voice: **Sreymom Neural** (Khmer Female Voice / ស្រី)")
         auto_video_dub = st.checkbox(
             "🎬 Auto-send to Video Studio & render dubbed video when done",
             value=True,
@@ -1952,6 +2169,14 @@ with tab_transcribe:
                 if existing_srt_file:
                     st.session_state.source_srt = existing_srt_file.getvalue().decode("utf-8-sig")
                     subtitles = parse_srt(st.session_state.source_srt)
+                    if st.session_state.get("uploaded_media_path"):
+                        seg_voices = classify_all_segments_piseth_sreymom(subtitles, media_path=st.session_state.uploaded_media_path)
+                        if seg_voices:
+                            st.session_state.subtitle_voices = {idx: v["voice"] for idx, v in seg_voices.items()}
+                            st.session_state.subtitle_voice_details = seg_voices
+                            m_count = sum(1 for v in seg_voices.values() if v.get("gender") == "Male")
+                            f_count = sum(1 for v in seg_voices.values() if v.get("gender") == "Female")
+                            st.session_state.voice_gender_counts = {"male": m_count, "female": f_count}
                     st.success(f"Successfully loaded {len(subtitles)} subtitle segments from SRT!")
                 elif uploaded_media:
                     with st.spinner(f"Transcribing media using **{pipeline_model}**..."):
@@ -1965,7 +2190,19 @@ with tab_transcribe:
                         st.session_state.source_srt = srt_output
                         subtitles = parse_srt(srt_output)
                         st.session_state.detected_voice_info = detect_voice_piseth_sreymom(st.session_state.uploaded_media_path)
-                        st.success(f"Transcription complete! Extracted {len(subtitles)} segments.")
+
+                        # Automatically classify character gender (Piseth vs Sreymom) for all segments
+                        seg_voices = classify_all_segments_piseth_sreymom(subtitles, media_path=st.session_state.uploaded_media_path)
+                        if seg_voices:
+                            st.session_state.subtitle_voices = {idx: v["voice"] for idx, v in seg_voices.items()}
+                            st.session_state.subtitle_voice_details = seg_voices
+                            m_count = sum(1 for v in seg_voices.values() if v.get("gender") == "Male")
+                            f_count = sum(1 for v in seg_voices.values() if v.get("gender") == "Female")
+                            st.session_state.voice_gender_counts = {"male": m_count, "female": f_count}
+                            st.success(f"Transcription complete! Extracted {len(subtitles)} segments.")
+                            st.info(f"🎭 **ចាប់សម្លេងតួអង្គបានជោគជ័យ**: {m_count} 👨 Piseth (សម្លេងប្រុស) • {f_count} 👩 Sreymom (សម្លេងស្រី)")
+                        else:
+                            st.success(f"Transcription complete! Extracted {len(subtitles)} segments.")
                 else:
                     st.warning("Please upload a media file or SRT to proceed.")
 
@@ -1976,16 +2213,24 @@ with tab_transcribe:
                         st.success(f"✅ Auto-translated {len(translated_subs)} segments to Khmer!")
 
                     if auto_voiceover:
-                        disp_v_t1 = (
-                            st.session_state.get("detected_voice_info", {}).get("name", "Auto-Detect")
-                            if chosen_voice == "auto_detect"
-                            else chosen_voice
-                        )
+                        active_voice_t1 = st.session_state.get("chosen_voice", chosen_voice)
+                        counts = st.session_state.get("voice_gender_counts", {})
+                        m_c = counts.get("male", 0)
+                        f_c = counts.get("female", 0)
+                        if active_voice_t1 == "auto_detect":
+                            disp_v_t1 = f"Auto Detect (👨 Piseth {m_c} / 👩 Sreymom {f_c})" if (m_c or f_c) else "Auto Detect (Piseth / Sreymom)"
+                        elif "Piseth" in active_voice_t1:
+                            disp_v_t1 = "Piseth Neural (Boy)"
+                        elif "Sreymom" in active_voice_t1:
+                            disp_v_t1 = "Sreymom Neural (Girl)"
+                        else:
+                            disp_v_t1 = active_voice_t1
+
                         with st.spinner(f"🎙️ Auto-synthesizing voice-over with {tts_engine} ({disp_v_t1})..."):
                             audio_bytes = synthesize_full_audio(
                                 translated_subs,
                                 tts_engine,
-                                chosen_voice,
+                                active_voice_t1,
                                 voice_speed,
                                 eleven_key,
                             )
@@ -2163,12 +2408,35 @@ with tab_translate:
                     st.session_state.khmer_srt = render_srt(translated_subs)
                     st.success("Translation complete!")
 
+                    # Ensure character voice classification is populated
+                    if not st.session_state.get("subtitle_voices") and st.session_state.get("uploaded_media_path"):
+                        seg_v = classify_all_segments_piseth_sreymom(translated_subs, media_path=st.session_state.uploaded_media_path)
+                        if seg_v:
+                            st.session_state.subtitle_voices = {idx: v["voice"] for idx, v in seg_v.items()}
+                            st.session_state.subtitle_voice_details = seg_v
+                            m_count = sum(1 for v in seg_v.values() if v.get("gender") == "Male")
+                            f_count = sum(1 for v in seg_v.values() if v.get("gender") == "Female")
+                            st.session_state.voice_gender_counts = {"male": m_count, "female": f_count}
+
                     if auto_voiceover_t2:
-                        with st.spinner(f"🎙️ Auto-synthesizing voice-over using {tts_engine} ({chosen_voice})..."):
+                        active_v2 = st.session_state.get("chosen_voice", chosen_voice)
+                        counts_t2 = st.session_state.get("voice_gender_counts", {})
+                        m_t2 = counts_t2.get("male", 0)
+                        f_t2 = counts_t2.get("female", 0)
+                        if active_v2 == "auto_detect":
+                            disp_v2 = f"Auto Detect (👨 Piseth {m_t2} / 👩 Sreymom {f_t2})" if (m_t2 or f_t2) else "Auto Detect (Piseth / Sreymom)"
+                        elif "Piseth" in active_v2:
+                            disp_v2 = "Piseth Neural (Boy)"
+                        elif "Sreymom" in active_v2:
+                            disp_v2 = "Sreymom Neural (Girl)"
+                        else:
+                            disp_v2 = active_v2
+
+                        with st.spinner(f"🎙️ Auto-synthesizing voice-over using {tts_engine} ({disp_v2})..."):
                             audio_bytes = synthesize_full_audio(
                                 translated_subs,
                                 tts_engine,
-                                chosen_voice,
+                                active_v2,
                                 voice_speed,
                                 eleven_key,
                             )
@@ -2258,78 +2526,72 @@ with tab_editor_voice:
     else:
         subs_list = parse_srt(active_srt)
         source_subs = parse_srt(st.session_state.source_srt) if st.session_state.source_srt else subs_list
-        
-        # Build DataFrame for data editor
-        table_data = []
-        for i, sub in enumerate(subs_list):
-            src_text = source_subs[i].text if i < len(source_subs) else ""
-            table_data.append({
-                "Index": sub.index,
-                "Start": format_timestamp(sub.start),
-                "End": format_timestamp(sub.end),
-                "Source Text": src_text,
-                "Dubbed Text": sub.text,
-            })
-        
-        df = pd.DataFrame(table_data)
-        
+
+        # Automatically detect character voices if not yet populated
+        if not st.session_state.get("subtitle_voices") and st.session_state.get("uploaded_media_path") and Path(st.session_state.uploaded_media_path).exists():
+            auto_segs = classify_all_segments_piseth_sreymom(subs_list, media_path=st.session_state.uploaded_media_path)
+            if auto_segs:
+                st.session_state.subtitle_voices = {idx: v["voice"] for idx, v in auto_segs.items()}
+                st.session_state.subtitle_voice_details = auto_segs
+                m_c = sum(1 for v in auto_segs.values() if v.get("gender") == "Male")
+                f_c = sum(1 for v in auto_segs.values() if v.get("gender") == "Female")
+                st.session_state.voice_gender_counts = {"male": m_c, "female": f_c}
+
         st.markdown("#### 📝 Subtitle Translation & Audio Editor")
 
         # Speaker Voice Assignment Toolbar
-        det_v_tab3 = st.session_state.get("detected_voice_info") or {}
-        default_voice_name = det_v_tab3.get("name", "Piseth Neural (Male)")
-        default_icon = det_v_tab3.get("icon", "👨")
+        sub_v_dict = st.session_state.get("subtitle_voices", {})
+        m_c = sum(1 for v in sub_v_dict.values() if "Piseth" in v)
+        f_c = sum(1 for v in sub_v_dict.values() if "Sreymom" in v)
 
         st.markdown(
             f"""
-            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 10px 14px; margin: 10px 0 12px 0;">
+            <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 10px 14px; margin: 10px 0 12px 0;">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
-                    <span style="font-weight: 700; color: #f8fafc; font-size: 0.92rem;">🎭 Speaker Voice Assignment (Piseth 👨 / Sreymom 👩)</span>
-                    <span style="font-size: 0.72rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 8px; border-radius: 6px; font-weight: 600;">
-                        Detected: {default_icon} {default_voice_name}
+                    <span style="font-weight: 700; color: #f8fafc; font-size: 0.92rem;">🎭 ការបែងចែកសម្លេងតួអង្គ (Character Voice: Piseth 👨 / Sreymom 👩)</span>
+                    <span style="font-size: 0.75rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 3px 10px; border-radius: 8px; font-weight: 600;">
+                        👨 Piseth: {m_c} ឃ្លា • 👩 Sreymom: {f_c} ឃ្លា
                     </span>
                 </div>
-                <p style="font-size: 0.76rem; color: #94a3b8; margin: 4px 0 8px 0;">Automatically classify each dialogue line as Piseth (Male) or Sreymom (Female) using segment pitch analysis, or assign voices individually.</p>
+                <p style="font-size: 0.76rem; color: #94a3b8; margin: 4px 0 0 0;">ប្រព័ន្ធចាប់សម្លេងតួអង្គស្វ័យប្រវត្តិតាមរយៈកម្រិត Pitch នៃឃ្លានីមួយៗ (សម្លេងប្រុស ➔ Piseth 👨, សម្លេងស្រី ➔ Sreymom 👩)។</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        v_act1, v_act2 = st.columns([1.5, 1], gap="small")
-        with v_act1:
-            if st.button("🎭 Auto-Assign Voices for All Lines", type="secondary", use_container_width=True, help="Analyzes audio pitch for each subtitle segment to assign Male (Piseth) or Female (Sreymom)"):
+        v_col1, v_col2, v_col3, v_col4 = st.columns([1.3, 1, 1, 0.8], gap="small")
+        with v_col1:
+            if st.button("🎭 ចាប់សម្លេងឡើងវិញ", type="secondary", use_container_width=True, help="វិភាគរលកសម្លេងសម្រាប់គ្រប់ឃ្លាដើម្បីកំណត់ Piseth (ប្រុស) ឬ Sreymom (ស្រី)"):
                 if not st.session_state.uploaded_media_path or not Path(st.session_state.uploaded_media_path).exists():
                     st.warning("No media file available to analyze per-line pitch. Please upload media in Tab 01.")
                 else:
-                    with st.spinner("Analyzing audio pitch across all subtitle lines..."):
+                    with st.spinner("កំពុងចាប់សម្លេងតួអង្គគ្រប់ឃ្លាទាំងអស់..."):
                         try:
-                            audio_full = AudioSegment.from_file(st.session_state.uploaded_media_path)
-                            m_count = 0
-                            f_count = 0
-                            if "subtitle_voices" not in st.session_state:
-                                st.session_state.subtitle_voices = {}
-
-                            for sub in subs_list:
-                                clip = audio_full[sub.start:sub.end]
-                                if len(clip) >= 250:
-                                    seg_det = detect_voice_piseth_sreymom(audio_segment=clip)
-                                else:
-                                    seg_det = det_v_tab3 or {"voice": "km-KH-PisethNeural", "gender": "Male"}
-
-                                st.session_state.subtitle_voices[sub.index] = seg_det["voice"]
-                                if seg_det.get("gender") == "Female":
-                                    f_count += 1
-                                else:
-                                    m_count += 1
-
-                            st.success(f"✅ Voice classification complete: {m_count} 👨 Piseth (Male), {f_count} 👩 Sreymom (Female) assigned!")
-                            st.rerun()
+                            seg_v = classify_all_segments_piseth_sreymom(subs_list, media_path=st.session_state.uploaded_media_path)
+                            if seg_v:
+                                st.session_state.subtitle_voices = {idx: v["voice"] for idx, v in seg_v.items()}
+                                st.session_state.subtitle_voice_details = seg_v
+                                m_count = sum(1 for v in seg_v.values() if v.get("gender") == "Male")
+                                f_count = sum(1 for v in seg_v.values() if v.get("gender") == "Female")
+                                st.session_state.voice_gender_counts = {"male": m_count, "female": f_count}
+                                st.success(f"✅ ចាប់សម្លេងតួអង្គបានជោគជ័យ: {m_count} 👨 Piseth (ប្រុស) • {f_count} 👩 Sreymom (ស្រី)")
+                                st.rerun()
                         except Exception as err:
                             st.error(f"Voice auto-assignment failed: {err}")
-        with v_act2:
-            if st.button("🔄 Reset All Line Voices", use_container_width=True):
+        with v_col2:
+            if st.button("👨 All Piseth", use_container_width=True, help="Set all dialogue lines to Piseth Neural (Boy/Male)"):
+                st.session_state.subtitle_voices = {sub.index: "km-KH-PisethNeural" for sub in subs_list}
+                st.toast("Set all lines to 👨 Piseth Neural!", icon="👨")
+                st.rerun()
+        with v_col3:
+            if st.button("👩 All Sreymom", use_container_width=True, help="Set all dialogue lines to Sreymom Neural (Girl/Female)"):
+                st.session_state.subtitle_voices = {sub.index: "km-KH-SreymomNeural" for sub in subs_list}
+                st.toast("Set all lines to 👩 Sreymom Neural!", icon="👩")
+                st.rerun()
+        with v_col4:
+            if st.button("🔄 Reset", use_container_width=True, help="Reset all lines to global default"):
                 st.session_state.subtitle_voices = {}
-                st.toast("Reset all segment voices to global default.", icon="🔄")
+                st.toast("Reset all line voices to global default.", icon="🔄")
                 st.rerun()
 
         editor_mode = st.radio(
@@ -2399,20 +2661,22 @@ with tab_editor_voice:
                 cur_line_voice = det_v_tab3.get("voice", "km-KH-PisethNeural")
 
             v_options = {
-                "👨 Piseth Neural (Male)": "km-KH-PisethNeural",
-                "👩 Sreymom Neural (Female)": "km-KH-SreymomNeural",
+                "👨 Piseth (ប្រុស / Boy)": "km-KH-PisethNeural",
+                "👩 Sreymom (ស្រី / Girl)": "km-KH-SreymomNeural",
             }
             inv_v = {v: k for k, v in v_options.items()}
-            cur_label = inv_v.get(cur_line_voice, "👨 Piseth Neural (Male)")
-            card_voice_idx = list(v_options.keys()).index(cur_label) if cur_label in v_options else 0
+            cur_label = inv_v.get(cur_line_voice, "👨 Piseth (ប្រុស / Boy)")
 
-            chosen_card_voice_label = st.radio(
+            st.caption("Voice for this Segment:")
+            chosen_card_voice_label = st.pills(
                 "Speaker Voice for Segment",
                 options=list(v_options.keys()),
-                index=card_voice_idx,
-                horizontal=True,
-                key=f"card_voice_radio_{cur_idx}",
+                default=cur_label,
+                key=f"card_voice_pills_{cur_idx}",
+                label_visibility="collapsed",
             )
+            if not chosen_card_voice_label:
+                chosen_card_voice_label = cur_label
             chosen_card_voice = v_options[chosen_card_voice_label]
 
             edited_khmer_text = st.text_area(
@@ -2528,13 +2792,19 @@ with tab_editor_voice:
 
         st.markdown("---")
         st.markdown("#### 🎙️ Synthesize Complete Voice-Over Track")
-        disp_v_t3 = (
-            st.session_state.get("detected_voice_info", {}).get("name", "Auto-Detect")
-            if chosen_voice == "auto_detect"
-            else chosen_voice
-        )
+        disp_v_t3 = chosen_voice
+        if chosen_voice == "auto_detect":
+            vg = st.session_state.get("voice_gender_counts", {})
+            m_t3 = vg.get("male", 0)
+            f_t3 = vg.get("female", 0)
+            disp_v_t3 = f"Auto Detect (👨 Piseth {m_t3} / 👩 Sreymom {f_t3})" if (m_t3 or f_t3) else "Auto Detect (Piseth / Sreymom)"
+        elif "Piseth" in chosen_voice:
+            disp_v_t3 = "Piseth Neural (Boy)"
+        elif "Sreymom" in chosen_voice:
+            disp_v_t3 = "Sreymom Neural (Girl)"
+
         custom_voice_count = len(st.session_state.get("subtitle_voices", {}))
-        voice_note = f"Voice: **{disp_v_t3}**" + (f" ({custom_voice_count} lines custom assigned)" if custom_voice_count else "")
+        voice_note = f"Voice: **{disp_v_t3}**" + (f" ({custom_voice_count} lines assigned)" if custom_voice_count else "")
         st.caption(f"Engine: **{tts_engine}** • {voice_note} • Speed: **{voice_speed}x**")
         
         btn_synth = st.button("⚡ Generate Full Synchronized Voice-Over Track", type="primary", use_container_width=True)
@@ -2543,9 +2813,10 @@ with tab_editor_voice:
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
                 
-                def on_progress(current, total):
+                def on_progress(current, total, tag=""):
                     progress_bar.progress(current / total)
-                    status_text.text(f"Synthesizing segment {current} of {total}...")
+                    extra = f" ({tag})" if tag else ""
+                    status_text.text(f"កំពុងបង្កើតសម្លេងឃ្លាទី {current} នៃ {total}{extra}...")
 
                 audio_bytes = synthesize_full_audio(
                     subs_list,
