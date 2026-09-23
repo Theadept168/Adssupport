@@ -1,0 +1,8 @@
+definition_version: 1
+streamlit:
+  name: dubber_ai_studio
+  stage: streamlit_stage
+  query_warehouse: COMPUTE_WH
+  main_file: app.py
+  env_file: environment.yml
+  title: Dubber AI Pro Studio

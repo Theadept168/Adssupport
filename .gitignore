@@ -1,0 +1,25 @@
+# Local secrets and configs
+.dubber_config.json
+.dubber_input/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Heavy local binaries and media files
+ffmpeg.exe
+cloudflared.exe
+*.mp4
+*.mp3
+*.wav
+*.m4a
+*.mkv
+
+# Environment & IDE
+.env
+.venv
+env/
+venv/
+.vscode/
+.idea/

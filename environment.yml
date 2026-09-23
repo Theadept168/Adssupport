@@ -1,0 +1,17 @@
+name: dubber_ai_studio
+channels:
+  - snowflake
+dependencies:
+  - python=3.12
+  - streamlit>=1.37.0
+  - pandas
+  - requests
+  - httpx
+  - pydub
+  - pip
+  - pip:
+      - google-genai
+      - edge-tts>=7.0.0
+      - openai-whisper
+      - openai
+      - gTTS
