@@ -28,8 +28,21 @@ st.set_page_config(
 )
 
 CONFIG_PATH = Path(".dubber_config.json")
-STORAGE_DIR = Path(".dubber_input")
-STORAGE_DIR.mkdir(exist_ok=True)
+BASE_STORAGE_DIR = Path(".dubber_input")
+BASE_STORAGE_DIR.mkdir(exist_ok=True)
+STORAGE_DIR = BASE_STORAGE_DIR  # fallback reference
+
+
+def get_user_storage_dir(username: str = None) -> Path:
+    if not username:
+        try:
+            username = st.session_state.get("auth_user", "admin")
+        except Exception:
+            username = "admin"
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", str(username or "admin")).strip().lower() or "admin"
+    user_dir = BASE_STORAGE_DIR / "users" / safe_name
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
 
 FFMPEG_PATH = Path(__file__).with_name("ffmpeg.exe")
 FFMPEG_BIN = str(FFMPEG_PATH.resolve()) if FFMPEG_PATH.exists() else "ffmpeg"
@@ -140,13 +153,16 @@ EDGE_VOICES = {
 }
 
 VOICE_BUTTON_OPTIONS = [
-    "🎭 Auto (Piseth 👨 / Sreymom 👩)",
-    "👨 Piseth (ប្រុស / Boy)",
-    "👩 Sreymom (ស្រី / Girl)",
+    "🎭 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Piseth 👨 + Sreymom 👩)",
+    "👨 Piseth តែម្នាក់ឯង (ប្រុស)",
+    "👩 Sreymom តែម្នាក់ឯង (ស្រី)",
 ]
 VOICE_BUTTON_MAP = {
+    "🎭 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Piseth 👨 + Sreymom 👩)": "auto_detect",
     "🎭 Auto (Piseth 👨 / Sreymom 👩)": "auto_detect",
+    "👨 Piseth តែម្នាក់ឯង (ប្រុស)": "km-KH-PisethNeural",
     "👨 Piseth (ប្រុស / Boy)": "km-KH-PisethNeural",
+    "👩 Sreymom តែម្នាក់ឯង (ស្រី)": "km-KH-SreymomNeural",
     "👩 Sreymom (ស្រី / Girl)": "km-KH-SreymomNeural",
 }
 
@@ -156,13 +172,13 @@ def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
         return 140.0
     frame_len = int(sample_rate * 0.05)  # 50ms window = 800 samples
     hop_len = int(sample_rate * 0.025)   # 25ms step = 400 samples
-    min_lag = int(sample_rate / 350)     # ~350 Hz max human speech F0 (~45 samples)
+    min_lag = int(sample_rate / 380)     # ~380 Hz max human speech F0 (~42 samples)
     max_lag = int(sample_rate / 75)      # ~75 Hz min human speech F0 (~213 samples)
     pitches = []
 
     # Adaptive energy threshold to detect voiced frames even on quiet speech
     mean_energy = float(np.mean(samples**2)) if len(samples) > 0 else 0.0
-    energy_thresh = max(25.0, mean_energy * 0.08)
+    energy_thresh = max(20.0, mean_energy * 0.06)
 
     max_samples = min(len(samples) - frame_len, sample_rate * 45)
     if max_samples <= 0:
@@ -180,9 +196,9 @@ def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
             peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
             peak_val = corr[peak_lag]
             zero_lag = corr[0]
-            if zero_lag > 0 and (peak_val / zero_lag) > 0.22:  # Voiced frame threshold
+            if zero_lag > 0 and (peak_val / zero_lag) > 0.20:  # Voiced frame threshold
                 f0 = sample_rate / peak_lag
-                if 75 <= f0 <= 350:
+                if 75 <= f0 <= 380:
                     pitches.append(f0)
     return float(np.median(pitches)) if pitches else 140.0
 
@@ -194,7 +210,7 @@ def detect_voice_piseth_sreymom(media_path: str = None, audio_segment: AudioSegm
                 return {
                     "voice": "km-KH-PisethNeural",
                     "gender": "Male",
-                    "name": "Piseth Neural (Male)",
+                    "name": "Piseth Neural (Male / ប្រុស)",
                     "pitch": 130.0,
                     "icon": "👨",
                 }
@@ -209,12 +225,12 @@ def detect_voice_piseth_sreymom(media_path: str = None, audio_segment: AudioSegm
         samples = np.array(audio_16k.get_array_of_samples(), dtype=np.float32)
         f0 = estimate_pitch_f0(samples, 16000)
 
-        # Male fundamental frequency typically 85-155 Hz, Female 165-255 Hz
-        if f0 < 165.0:
+        # Male fundamental frequency typically 85-155 Hz, Female 160-280 Hz (boundary at 160.0 Hz)
+        if f0 < 160.0:
             return {
                 "voice": "km-KH-PisethNeural",
                 "gender": "Male",
-                "name": "Piseth Neural (Male)",
+                "name": "Piseth Neural (Male / ប្រុស)",
                 "pitch": round(f0, 1),
                 "icon": "👨",
             }
@@ -222,7 +238,7 @@ def detect_voice_piseth_sreymom(media_path: str = None, audio_segment: AudioSegm
             return {
                 "voice": "km-KH-SreymomNeural",
                 "gender": "Female",
-                "name": "Sreymom Neural (Female)",
+                "name": "Sreymom Neural (Female / ស្រី)",
                 "pitch": round(f0, 1),
                 "icon": "👩",
             }
@@ -230,7 +246,7 @@ def detect_voice_piseth_sreymom(media_path: str = None, audio_segment: AudioSegm
         return {
             "voice": "km-KH-PisethNeural",
             "gender": "Male",
-            "name": "Piseth Neural (Male)",
+            "name": "Piseth Neural (Male / ប្រុស)",
             "pitch": 130.0,
             "icon": "👨",
         }
@@ -314,35 +330,67 @@ def classify_all_segments_piseth_sreymom(
     if not subtitles:
         return {}
 
-    if audio_full is None:
-        if not media_path or not Path(media_path).exists():
-            return {}
+    results = {}
+    prev_info = None
+
+    if audio_full is None and media_path and Path(media_path).exists():
         try:
             audio_full = AudioSegment.from_file(media_path)
         except Exception:
-            return {}
+            audio_full = None
 
     # Global fallback if a segment is too short or quiet
-    global_info = detect_voice_piseth_sreymom(audio_segment=audio_full[:60000])
+    global_info = detect_voice_piseth_sreymom(audio_segment=audio_full[:60000]) if audio_full is not None else None
     fallback_info = global_info if global_info else {
         "voice": "km-KH-PisethNeural",
         "gender": "Male",
-        "name": "Piseth Neural (Male)",
+        "name": "Piseth Neural (Male / ប្រុស)",
         "pitch": 130.0,
         "icon": "👨",
     }
 
-    results = {}
     for sub in subtitles:
-        start_ms = max(0, sub.start)
-        end_ms = min(len(audio_full), sub.end)
-        clip_len = end_ms - start_ms
-        if clip_len >= 180:
-            clip = audio_full[start_ms:end_ms]
-            info = detect_voice_piseth_sreymom(audio_segment=clip)
-            results[sub.index] = info
+        # 1. Text cues override (e.g. [ស្រី], [ប្រុស], [Female], [Male])
+        t_clean = sub.text.strip().lower()
+        if any(t_clean.startswith(prefix) for prefix in ("[ស្រី]", "[តួស្រី]", "[female]", "[woman]", "[girl]", "[sreymom]")):
+            cur_info = {
+                "voice": "km-KH-SreymomNeural",
+                "gender": "Female",
+                "name": "Sreymom Neural (Female / ស្រី)",
+                "pitch": 220.0,
+                "icon": "👩",
+            }
+            results[sub.index] = cur_info
+            prev_info = cur_info
+            continue
+        elif any(t_clean.startswith(prefix) for prefix in ("[ប្រុស]", "[តួប្រុស]", "[male]", "[man]", "[boy]", "[piseth]")):
+            cur_info = {
+                "voice": "km-KH-PisethNeural",
+                "gender": "Male",
+                "name": "Piseth Neural (Male / ប្រុស)",
+                "pitch": 120.0,
+                "icon": "👨",
+            }
+            results[sub.index] = cur_info
+            prev_info = cur_info
+            continue
+
+        # 2. Acoustic pitch detection from media audio clip
+        if audio_full is not None:
+            start_ms = max(0, sub.start)
+            end_ms = min(len(audio_full), sub.end)
+            clip_len = end_ms - start_ms
+            if clip_len >= 180:
+                clip = audio_full[start_ms:end_ms]
+                info = detect_voice_piseth_sreymom(audio_segment=clip)
+                results[sub.index] = info
+                prev_info = info
+            elif prev_info is not None:
+                results[sub.index] = prev_info
+            else:
+                results[sub.index] = fallback_info
         else:
-            results[sub.index] = fallback_info
+            results[sub.index] = prev_info or fallback_info
 
     return results
 
@@ -368,12 +416,11 @@ def run_async(coro):
 def generate_with_gemini_retry(client, model_name: str, contents, config):
     model_names = [model_name]
     fallback_candidates = [
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
         "gemini-flash-latest",
-        "gemini-2.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
     ]
     for c in fallback_candidates:
         if c not in model_names:
@@ -394,6 +441,124 @@ def generate_with_gemini_retry(client, model_name: str, contents, config):
     raise RuntimeError(f"All Gemini models exhausted. Last error: {last_error}")
 
 
+THAI_CHAR_PATTERN = re.compile(r"[\u0e00-\u0e7f]")
+
+
+def has_thai_characters(text: str) -> bool:
+    """Check if string contains any Thai Unicode characters."""
+    if not text:
+        return False
+    return bool(THAI_CHAR_PATTERN.search(str(text)))
+
+
+def strip_or_clean_thai(text: str) -> str:
+    """Fallback filter to strip any remaining Thai characters if all LLM passes fail."""
+    if not text:
+        return ""
+    cleaned = THAI_CHAR_PATTERN.sub("", str(text))
+    cleaned = re.sub(r" {2,}", " ", cleaned).strip()
+    return cleaned
+
+
+def purge_and_enforce_khmer(
+    subtitles: list[Subtitle],
+    source_language: str = "auto",
+    gemini_key: str = "",
+    openai_key: str = "",
+    model_name: str = "gemini-flash-latest",
+) -> list[Subtitle]:
+    """
+    Scans subtitle segments. If ANY Thai characters (U+0E00-U+0E7F) are detected,
+    forces an ultra-strict re-translation of those lines into 100% natural Khmer.
+    Strictly forbids and eliminates any Thai characters from the studio output.
+    """
+    if not subtitles:
+        return subtitles
+
+    offending_indices = [idx for idx, item in enumerate(subtitles) if has_thai_characters(item.text)]
+    if not offending_indices:
+        return subtitles
+
+    payload = [{"id": idx, "text": subtitles[idx].text} for idx in offending_indices]
+
+    retranslated = {}
+    force_prompt = (
+        "You are an expert audiovisual translator specializing in Khmer (ភាសាខ្មែរ).\n"
+        "STRICT MANDATORY RULE - NO THAI LANGUAGE ALLOWED:\n"
+        "The following subtitle lines mistakenly contain Thai text (ภาษาไทย) or Thai characters. "
+        "You MUST translate EVERY SINGLE WORD completely into 100% natural, fluent Khmer (អក្សរខ្មែរ).\n"
+        "1. Absolutely ZERO Thai characters (Unicode range U+0E00 to U+0E7F) are permitted in the output.\n"
+        "2. Do NOT output mixed Thai-Khmer. Every Thai phrase, verb, noun, name, and idiom must be translated into Khmer script.\n"
+        "3. Output strictly a JSON array of objects with numeric 'id' and 'text'. No commentary or markdown.\n\n"
+        f"{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+    if gemini_key:
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=gemini_key)
+            g_mod = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-flash-latest"
+            resp, _ = generate_with_gemini_retry(
+                client,
+                g_mod,
+                force_prompt,
+                {"response_mime_type": "application/json", "temperature": 0.1},
+            )
+            raw = resp.text.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```json\s*|^```\s*|```$", "", raw, flags=re.MULTILINE).strip()
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for obj in parsed:
+                    t_text = str(obj.get("text", "")).strip()
+                    if t_text and not has_thai_characters(t_text):
+                        retranslated[int(obj["id"])] = t_text
+        except Exception:
+            pass
+
+    still_needed = [idx for idx in offending_indices if idx not in retranslated]
+    if still_needed and openai_key:
+        try:
+            import httpx
+            from openai import OpenAI
+
+            client = OpenAI(api_key=openai_key, http_client=httpx.Client())
+            oa_payload = [{"id": idx, "text": subtitles[idx].text} for idx in still_needed]
+            oa_prompt = (
+                "Translate these subtitle lines completely into 100% natural Khmer (ភាសាខ្មែរ). "
+                "STRICT BAN: Absolutely NO Thai characters (U+0E00-U+0E7F) allowed in output. "
+                "Return JSON with a 'translations' array of objects having numeric 'id' and 'text'."
+            )
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": oa_prompt},
+                    {"role": "user", "content": json.dumps(oa_payload, ensure_ascii=False)},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            oa_res = json.loads(res.choices[0].message.content)
+            for item in oa_res.get("translations", []):
+                t_text = str(item.get("text", "")).strip()
+                if t_text and not has_thai_characters(t_text):
+                    retranslated[int(item["id"])] = t_text
+        except Exception:
+            pass
+
+    cleaned_subs = []
+    for idx, item in enumerate(subtitles):
+        new_text = retranslated.get(idx, item.text)
+        if has_thai_characters(new_text):
+            new_text = strip_or_clean_thai(new_text)
+            if not new_text:
+                new_text = "..."
+        cleaned_subs.append(Subtitle(item.index, item.start, item.end, new_text))
+
+    return cleaned_subs
+
+
 def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: str, api_key: str, model_name: str) -> list[Subtitle]:
     if not api_key:
         raise ValueError("Please provide a Gemini API key in the sidebar.")
@@ -403,9 +568,13 @@ def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: 
     payload = [{"id": position, "text": item.text} for position, item in enumerate(subtitles)]
     source_description = "the detected source language" if source_language.strip().lower() == "auto" else source_language
     prompt = (
-        f"Translate these subtitle lines from {source_description} to Khmer. "
-        "Return strictly a JSON array of objects, each with numeric 'id' and one translated 'text' field. "
-        "Preserve exact meaning, names, punctuation, natural tone, and line order. Do not add markdown or commentary.\n\n"
+        f"You are a professional audiovisual translator. Translate these subtitle lines from {source_description} to 100% natural Khmer (ភាសាខ្មែរ).\n"
+        "STRICT MANDATORY RULES:\n"
+        "1. ABSOLUTELY NO THAI SCRIPT OR THAI WORDS ALLOWED: You MUST NOT output any Thai characters (Unicode range U+0E00 to U+0E7F) under any circumstances. "
+        "Even if the source dialogue or subtitle is in Thai (ภาษาไทย), every single Thai word, phrase, name, and idiom MUST be fully and naturally translated into Khmer script (អក្សរខ្មែរ).\n"
+        "2. NO MIXED THAI-KHMER: Do NOT leave any untranslated Thai words. Convert everything completely into Khmer.\n"
+        "3. Preserve exact meaning, names, dramatic emotion, line order, and punctuation.\n"
+        "4. Return strictly a JSON array of objects, each with numeric 'id' and one translated 'text' field (containing ONLY Khmer script, numbers, and standard punctuation). Do not add markdown or commentary.\n\n"
         f"{json.dumps(payload, ensure_ascii=False)}"
     )
     response, used_model = generate_with_gemini_retry(
@@ -423,7 +592,8 @@ def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: 
     if not isinstance(translated_payload, list) or len(translated_payload) != len(subtitles):
         raise ValueError(f"Expected {len(subtitles)} translated lines, but received {len(translated_payload)}.")
     translations = {int(item["id"]): str(item["text"]).strip() for item in translated_payload}
-    return [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
+    res_subs = [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
+    return purge_and_enforce_khmer(res_subs, source_language=source_language, gemini_key=api_key, model_name=model_name)
 
 
 def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: str, api_key: str) -> list[Subtitle]:
@@ -440,7 +610,12 @@ def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: 
         messages=[
             {
                 "role": "system",
-                "content": f"Translate subtitle lines from {source_description} to Khmer. Return JSON with a 'translations' array of objects having numeric 'id' and 'text'. Maintain exact order, names, and tone.",
+                "content": (
+                    f"Translate subtitle lines from {source_description} to 100% natural Khmer (ភាសាខ្មែរ). "
+                    "CRITICAL BAN ON THAI: Under NO circumstance should any Thai characters (U+0E00-U+0E7F) appear in the output. "
+                    "If the source is in Thai or contains Thai words, you MUST translate every single Thai word completely into Khmer script (អក្សរខ្មែរ). "
+                    "Return JSON with a 'translations' array of objects having numeric 'id' and 'text'. Maintain exact order, names, and tone."
+                ),
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
@@ -452,23 +627,27 @@ def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: 
     if len(translated_payload) != len(subtitles):
         raise ValueError(f"Expected {len(subtitles)} lines, got {len(translated_payload)}.")
     translations = {int(item["id"]): str(item["text"]).strip() for item in translated_payload}
-    return [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
+    res_subs = [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
+    return purge_and_enforce_khmer(res_subs, source_language=source_language, openai_key=api_key)
 
 
 def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini_key: str, openai_key: str, model_name: str) -> list[Subtitle]:
-    g_model = model_name if model_name.startswith("gemini-") else "gemini-3.5-flash"
+    g_model = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-flash-latest"
     try:
         if gemini_key:
-            return translate_subtitles_with_gemini(subtitles, source_language, gemini_key, g_model)
+            res = translate_subtitles_with_gemini(subtitles, source_language, gemini_key, g_model)
         elif openai_key:
-            return translate_subtitles_with_openai(subtitles, source_language, openai_key)
+            res = translate_subtitles_with_openai(subtitles, source_language, openai_key)
         else:
             raise ValueError("No API key configured for auto-translation. Enter a Gemini or OpenAI API key in the sidebar.")
     except Exception as gemini_err:
         if openai_key:
             st.info("Gemini was busy, automatically switched to OpenAI GPT-4o Mini.")
-            return translate_subtitles_with_openai(subtitles, source_language, openai_key)
-        raise gemini_err
+            res = translate_subtitles_with_openai(subtitles, source_language, openai_key)
+        else:
+            raise gemini_err
+
+    return purge_and_enforce_khmer(res, source_language=source_language, gemini_key=gemini_key, openai_key=openai_key, model_name=g_model)
 
 
 def transcribe_with_openai(media_path: Path, api_key: str) -> str:
@@ -495,11 +674,19 @@ def transcribe_with_openai(media_path: Path, api_key: str) -> str:
     ])
 
 
+@st.cache_resource(show_spinner="Loading speech model into RAM...")
+def get_whisper_model(model_name: str):
+    import whisper
+
+    return whisper.load_model(model_name)
+
+
 def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
+    user_storage = get_user_storage_dir()
     input_suffix = Path(uploaded_file.name).suffix.lower()
     if input_suffix not in {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv"}:
         input_suffix = ".mp4"
-    media_path = STORAGE_DIR / f"uploaded_media{input_suffix}"
+    media_path = user_storage / f"uploaded_media{input_suffix}"
     media_path.write_bytes(uploaded_file.getvalue())
 
     st.session_state.uploaded_media_path = str(media_path.resolve())
@@ -507,7 +694,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
 
     upload_file_path = media_path
     if st.session_state.is_video:
-        audio_extract_path = STORAGE_DIR / "temp_transcribe_audio.mp3"
+        audio_extract_path = user_storage / "temp_transcribe_audio.mp3"
         cmd = [
             FFMPEG_BIN, "-y", "-i", str(media_path),
             "-vn", "-acodec", "libmp3lame", "-b:a", "64k", "-ar", "16000",
@@ -539,7 +726,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
             max_wait -= 1
 
         candidate_models = [model_name]
-        for alt in ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.6-flash"]:
+        for alt in ["gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]:
             if alt not in candidate_models:
                 candidate_models.append(alt)
 
@@ -576,8 +763,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
         if not response or not getattr(response, "text", "").strip():
             # Graceful automated fallback to local Whisper if all Gemini models hit quota or fail
             st.warning("⚠️ Gemini quota temporarily reached. Automatically completing transcription with local Whisper...")
-            import whisper
-            model = whisper.load_model("base")
+            model = get_whisper_model("base")
             result = model.transcribe(str(upload_file_path), fp16=False)
             subtitles = [
                 Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
@@ -607,8 +793,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
 
         if not subtitles:
             # Fallback to local whisper if json parsing failed
-            import whisper
-            model = whisper.load_model("base")
+            model = get_whisper_model("base")
             result = model.transcribe(str(upload_file_path), fp16=False)
             subtitles = [
                 Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
@@ -620,9 +805,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
             raise ValueError("No speech segments detected in media.")
         return render_srt(subtitles)
 
-    import whisper
-
-    model = whisper.load_model(model_name)
+    model = get_whisper_model(model_name)
     result = model.transcribe(str(upload_file_path), fp16=False)
     subtitles = [
         Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
@@ -639,6 +822,9 @@ def synthesize_single_line(text: str, engine: str, voice: str, speed: float, ele
     cleaned_text = text.replace("\n", " ").strip()
     # Remove bracketed and parenthesized sound cues (e.g. [Music], [Applause], (laughter))
     cleaned_text = re.sub(r"\[.*?\]|\(.*?\)", "", cleaned_text).strip()
+    # Safety: Filter any stray Thai characters so Khmer neural voice doesn't glitch
+    if has_thai_characters(cleaned_text):
+        cleaned_text = strip_or_clean_thai(cleaned_text)
 
     # If text is empty or contains no pronounceable letters/digits across any script (e.g. "...", "---", "?!?")
     if not cleaned_text or not re.search(r"[\w\u1780-\u17ff]", cleaned_text):
@@ -812,7 +998,8 @@ def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, sp
     final_bytes = wav_file.getvalue()
 
     # Save to disk for video multiplexing
-    dubbed_audio_path = STORAGE_DIR / "dubbed_voiceover.wav"
+    user_storage = get_user_storage_dir()
+    dubbed_audio_path = user_storage / "dubbed_voiceover.wav"
     dubbed_audio_path.write_bytes(final_bytes)
     st.session_state.dubbed_audio_path = str(dubbed_audio_path.resolve())
 
@@ -843,7 +1030,8 @@ def process_video_dubbing(
     enable_orig_voice: bool = False, # Turn ON to keep original speaker/actor voice (documentary style)
     orig_voice_vol: float = 0.15, # Volume of original voice (0.05 to 0.60)
 ) -> str:
-    out_video_path = STORAGE_DIR / "dubbed_output.mp4"
+    user_storage = get_user_storage_dir()
+    out_video_path = user_storage / "dubbed_output.mp4"
     if out_video_path.exists():
         try:
             out_video_path.unlink()
@@ -872,7 +1060,7 @@ def process_video_dubbing(
     if burn_subtitles and srt_path and Path(srt_path).exists():
         escaped_srt = Path(srt_path).resolve().as_posix().replace(":", r"\:")
         video_filters.append(
-            f"subtitles='{escaped_srt}':force_style='Fontname=Leelawadee UI,FontSize=16,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,MarginV=25,Outline=1'"
+            f"subtitles='{escaped_srt}':force_style='Fontname=Kantumruy Pro,FontSize=16,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,MarginV=25,Outline=1'"
         )
 
     filter_complex = []
@@ -948,10 +1136,19 @@ def process_video_dubbing(
         else:
             cmd.extend(["-an"])
 
+    if burn_subtitles:
+        cmd.extend([
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.1",
+            "-preset", "fast",
+            "-crf", "23",
+        ])
+    else:
+        cmd.extend(["-c:v", "copy"])
+
     cmd.extend([
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "22",
         "-c:a", "aac",
         "-b:a", "192k",
         "-movflags", "+faststart",
@@ -963,6 +1160,22 @@ def process_video_dubbing(
         raise RuntimeError(f"FFmpeg error:\n{proc.stderr}")
 
     return str(out_video_path.resolve())
+
+
+def render_video_preview(video_path: str):
+    if not video_path:
+        st.info("No video file available to preview.")
+        return
+    p = Path(video_path)
+    if not p.exists() or p.stat().st_size == 0:
+        st.info("No valid video file available to preview.")
+        return
+    try:
+        with open(p, "rb") as vf:
+            v_data = vf.read()
+        st.video(v_data, format="video/mp4")
+    except Exception:
+        st.video(str(p.resolve()), format="video/mp4")
 
 
 # ==========================================
@@ -1435,6 +1648,10 @@ if "auth_user" not in st.session_state:
     st.session_state.auth_user = ""
 if "current_device" not in st.session_state:
     st.session_state.current_device = ""
+if "session_token" not in st.session_state:
+    st.session_state.session_token = ""
+if "session_lock_alert" not in st.session_state:
+    st.session_state.session_lock_alert = ""
 
 # Auto-Login with Saved Device Token
 if not st.session_state.authenticated:
@@ -1443,20 +1660,35 @@ if not st.session_state.authenticated:
     if device_token and device_token in saved_tokens:
         tok_data = saved_tokens[device_token]
         tok_user = tok_data.get("user", "")
-        auth_users = saved_config.get("auth_users", {})
+        _cfg_check = load_saved_config()
+        auth_users = _cfg_check.get("auth_users", {})
         if tok_user in auth_users or tok_user == "admin":
-            st.session_state.authenticated = True
-            st.session_state.auth_user = tok_user
-            st.session_state.current_device = tok_data.get("device_name", "Saved Device")
+            # Validate that this saved device token's session_token still matches the active one
+            _tok_session = tok_data.get("session_token", "")
+            _live_session = auth_users.get(tok_user, {}).get("active_session_token", "") if isinstance(auth_users.get(tok_user), dict) else ""
+            if _tok_session and _tok_session == _live_session:
+                st.session_state.authenticated = True
+                st.session_state.auth_user = tok_user
+                st.session_state.session_token = _tok_session
+                st.session_state.current_device = tok_data.get("device_name", "Saved Device")
+            else:
+                # Session was taken over by another device — clear stale token
+                st.query_params.clear()
 
 
 def complete_user_login(username: str, remember: bool):
     dev_info = get_client_device_info()
-    auth_users = saved_config.get("auth_users", {})
+    # Generate a unique session token to enforce single active session
+    new_session_token = secrets.token_hex(24)
+
+    _cfg = load_saved_config()
+    auth_users = _cfg.get("auth_users", {})
     if username in auth_users:
         if isinstance(auth_users[username], dict):
             auth_users[username]["last_device"] = dev_info
             auth_users[username]["last_login"] = time.strftime("%Y-%m-%d %H:%M")
+            auth_users[username]["active_session_token"] = new_session_token
+            auth_users[username]["active_device_name"] = dev_info.get("device_name", "")
         else:
             auth_users[username] = {
                 "password": auth_users[username],
@@ -1464,6 +1696,8 @@ def complete_user_login(username: str, remember: bool):
                 "status": "approved",
                 "last_device": dev_info,
                 "last_login": time.strftime("%Y-%m-%d %H:%M"),
+                "active_session_token": new_session_token,
+                "active_device_name": dev_info.get("device_name", ""),
             }
     elif username == "admin":
         auth_users["admin"] = {
@@ -1472,14 +1706,17 @@ def complete_user_login(username: str, remember: bool):
             "status": "approved",
             "last_device": dev_info,
             "last_login": time.strftime("%Y-%m-%d %H:%M"),
+            "active_session_token": new_session_token,
+            "active_device_name": dev_info.get("device_name", ""),
         }
 
     updates = {"auth_users": auth_users}
     if remember:
         token = secrets.token_hex(16)
-        dev_tokens = saved_config.get("device_tokens", {})
+        dev_tokens = _cfg.get("device_tokens", {})
         dev_tokens[token] = {
             "user": username,
+            "session_token": new_session_token,
             **dev_info
         }
         updates["device_tokens"] = dev_tokens
@@ -1488,14 +1725,32 @@ def complete_user_login(username: str, remember: bool):
     save_saved_config(updates)
     st.session_state.authenticated = True
     st.session_state.auth_user = username
+    st.session_state.session_token = new_session_token
     st.session_state.current_device = dev_info.get("device_name", "Saved Device")
-    st.toast(f"Welcome back, {username}! Device saved 📱", icon="🎉")
+    st.session_state.session_lock_alert = ""
+    st.toast(f"Welcome back, {username}! 🎉", icon="🎉")
     st.rerun()
 
 
 if not st.session_state.authenticated:
     _, col_login, _ = st.columns([1, 1.4, 1])
     with col_login:
+        # Show session-lock warning if kicked out by another device
+        _lock_msg = st.session_state.get("session_lock_alert", "")
+        if _lock_msg:
+            st.markdown(
+                f"""
+                <div style="background: linear-gradient(135deg, rgba(239,68,68,0.18) 0%, rgba(15,23,42,0.95) 100%);
+                            border: 2px solid rgba(239,68,68,0.55); border-radius: 16px; padding: 18px 20px;
+                            margin-bottom: 1.2rem; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 6px;">⚠️</div>
+                    <div style="font-size: 0.95rem; font-weight: 700; color: #f87171; margin-bottom: 6px;">ការព្រមាន / Security Alert</div>
+                    <div style="font-size: 0.87rem; color: #fca5a5; line-height: 1.65;">{_lock_msg}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.session_state.session_lock_alert = ""
         st.markdown(
             """
             <div class="login-container-card">
@@ -1521,8 +1776,9 @@ if not st.session_state.authenticated:
                     if not login_username or not login_password:
                         st.error("Please enter both username and password.")
                     else:
-                        auth_users = saved_config.get("auth_users", {})
-                        pending_users = saved_config.get("pending_users", {})
+                        _fresh_cfg = load_saved_config()
+                        auth_users = _fresh_cfg.get("auth_users", {})
+                        pending_users = _fresh_cfg.get("pending_users", {})
 
                         if login_username in pending_users:
                             st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
@@ -1548,8 +1804,9 @@ if not st.session_state.authenticated:
                 btn_submit_signup = st.form_submit_button("📝 Register Customer Account", type="primary", use_container_width=True)
 
                 if btn_submit_signup:
-                    auth_users = saved_config.get("auth_users", {})
-                    pending_users = saved_config.get("pending_users", {})
+                    _fresh_cfg2 = load_saved_config()
+                    auth_users = _fresh_cfg2.get("auth_users", {})
+                    pending_users = _fresh_cfg2.get("pending_users", {})
 
                     if not signup_user or not signup_pass:
                         st.error("Please fill in both username and password.")
@@ -1579,6 +1836,28 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
+# Single-Session Verification Gate
+# ==========================================
+_gate_user = st.session_state.get("auth_user", "")
+_gate_token = st.session_state.get("session_token", "")
+if _gate_user and _gate_token:
+    _gate_cfg = load_saved_config()
+    _gate_users = _gate_cfg.get("auth_users", {})
+    _live_token = _gate_users.get(_gate_user, {}).get("active_session_token", "") if isinstance(_gate_users.get(_gate_user), dict) else ""
+    if _live_token and _live_token != _gate_token:
+        # Another device logged in and took over this account
+        st.session_state.authenticated = False
+        st.session_state.auth_user = ""
+        st.session_state.session_token = ""
+        st.session_state.current_device = ""
+        st.session_state.session_lock_alert = (
+            "⚠️ គណនីនេះត្រូវបានចូលប្រើ (Login) នៅលើឧបករណ៍ផ្សេងទៀតរួចហើយ!\n"
+            "មួយគណនីអាចប្រើប្រាស់បានតែ ១ ឧបករណ៍ប៉ុណ្ណោះ មិនអាចប្រើដំណាលគ្នាបានទេ។"
+        )
+        st.query_params.clear()
+        st.rerun()
+
+# ==========================================
 # Authenticated App Banner
 # ==========================================
 st.markdown(
@@ -1593,22 +1872,31 @@ st.markdown(
 )
 
 # ==========================================
-# Session State Initialization
+# Session State Initialization & Auto-Restore
 # ==========================================
+_curr_user_for_init = st.session_state.get("auth_user", "admin")
+_user_storage_init = get_user_storage_dir(_curr_user_for_init)
+_init_video = _user_storage_init / "dubbed_output.mp4"
+_init_audio = _user_storage_init / "dubbed_voiceover.wav"
+_init_srt = _user_storage_init / "burn_subtitles.srt"
+_init_media = _user_storage_init / "uploaded_media.mp4"
+if not _init_media.exists():
+    _init_media = _user_storage_init / "target_video.mp4"
+
 if "source_srt" not in st.session_state:
     st.session_state.source_srt = ""
 if "khmer_srt" not in st.session_state:
-    st.session_state.khmer_srt = ""
+    st.session_state.khmer_srt = _init_srt.read_text(encoding="utf-8") if _init_srt.exists() else ""
 if "uploaded_media_path" not in st.session_state:
-    st.session_state.uploaded_media_path = ""
+    st.session_state.uploaded_media_path = str(_init_media.resolve()) if _init_media.exists() else ""
 if "is_video" not in st.session_state:
-    st.session_state.is_video = False
+    st.session_state.is_video = bool(_init_media.exists())
 if "dubbed_audio_bytes" not in st.session_state:
-    st.session_state.dubbed_audio_bytes = None
+    st.session_state.dubbed_audio_bytes = _init_audio.read_bytes() if _init_audio.exists() else None
 if "dubbed_audio_path" not in st.session_state:
-    st.session_state.dubbed_audio_path = ""
+    st.session_state.dubbed_audio_path = str(_init_audio.resolve()) if _init_audio.exists() else ""
 if "output_video_path" not in st.session_state:
-    st.session_state.output_video_path = ""
+    st.session_state.output_video_path = str(_init_video.resolve()) if _init_video.exists() else ""
 if "enable_bg_music" not in st.session_state:
     st.session_state.enable_bg_music = False
 if "bg_music_vol" not in st.session_state:
@@ -1636,10 +1924,28 @@ if "subtitle_voices" not in st.session_state:
     st.session_state.subtitle_voices = {}
 if "chosen_voice" not in st.session_state:
     st.session_state.chosen_voice = "auto_detect"
-if "voice_btn_selection" not in st.session_state or st.session_state.voice_btn_selection not in VOICE_BUTTON_OPTIONS:
-    st.session_state.voice_btn_selection = "🎭 Auto (Piseth 👨 / Sreymom 👩)"
+if st.session_state.get("voice_btn_selection") not in VOICE_BUTTON_OPTIONS:
+    st.session_state.voice_btn_selection = VOICE_BUTTON_OPTIONS[0]
+if "sb_voice_pills" in st.session_state and st.session_state.sb_voice_pills not in VOICE_BUTTON_OPTIONS:
+    del st.session_state["sb_voice_pills"]
+if "t1_voice_pills" in st.session_state and st.session_state.t1_voice_pills not in VOICE_BUTTON_OPTIONS:
+    del st.session_state["t1_voice_pills"]
 if "voice_gender_counts" not in st.session_state:
     st.session_state.voice_gender_counts = {"male": 0, "female": 0}
+
+# Auto-classify segment voices if SRT and media are present but voices not yet loaded
+if not st.session_state.subtitle_voices and st.session_state.khmer_srt and st.session_state.uploaded_media_path and Path(st.session_state.uploaded_media_path).exists():
+    try:
+        _loaded_subs = parse_srt(st.session_state.khmer_srt)
+        _auto_seg_v = classify_all_segments_piseth_sreymom(_loaded_subs, media_path=st.session_state.uploaded_media_path)
+        if _auto_seg_v:
+            st.session_state.subtitle_voices = {idx: v["voice"] for idx, v in _auto_seg_v.items()}
+            st.session_state.subtitle_voice_details = _auto_seg_v
+            _mc = sum(1 for v in _auto_seg_v.values() if v.get("gender") == "Male")
+            _fc = sum(1 for v in _auto_seg_v.values() if v.get("gender") == "Female")
+            st.session_state.voice_gender_counts = {"male": _mc, "female": _fc}
+    except Exception:
+        pass
 
 # ==========================================
 # Sidebar: Settings & Configuration
@@ -1668,11 +1974,18 @@ with st.sidebar:
         dev_tokens = cfg.get("device_tokens", {})
         if dev_param in dev_tokens:
             del dev_tokens[dev_param]
-            save_saved_config({"device_tokens": dev_tokens})
+        # Clear active_session_token so account is freed for another device
+        _logout_user = st.session_state.get("auth_user", "")
+        _logout_auth = cfg.get("auth_users", {})
+        if _logout_user in _logout_auth and isinstance(_logout_auth[_logout_user], dict):
+            _logout_auth[_logout_user]["active_session_token"] = ""
+            _logout_auth[_logout_user]["active_device_name"] = ""
+        save_saved_config({"device_tokens": dev_tokens, "auth_users": _logout_auth})
         st.query_params.clear()
         st.session_state.authenticated = False
         st.session_state.auth_user = ""
         st.session_state.current_device = ""
+        st.session_state.session_token = ""
         st.toast("Logged out and device disconnected.")
         st.rerun()
 
@@ -1682,10 +1995,10 @@ with st.sidebar:
     pipeline_model = st.selectbox(
         "Speech Transcription Model",
         [
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
+            "gemini-flash-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
             "openai-gpt-4o-mini-transcribe",
             "base",
             "small",
@@ -1812,11 +2125,13 @@ with st.sidebar:
     )
     
     if tts_engine == "Microsoft Edge Neural":
-        st.markdown("**Voice Selection (1-Click Buttons):**")
-        cur_sb_v = st.session_state.get("voice_btn_selection", "🎭 Auto (Piseth 👨 / Sreymom 👩)")
+        st.markdown("**ជ្រើសរើសសម្លេង (Voice Mode):**")
+        cur_sb_v = st.session_state.get("voice_btn_selection", "🎭 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Piseth 👨 + Sreymom 👩)")
         if cur_sb_v not in VOICE_BUTTON_OPTIONS:
-            cur_sb_v = "🎭 Auto (Piseth 👨 / Sreymom 👩)"
+            cur_sb_v = "🎭 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Piseth 👨 + Sreymom 👩)"
 
+        if "sb_voice_pills" in st.session_state and st.session_state.sb_voice_pills not in VOICE_BUTTON_OPTIONS:
+            del st.session_state["sb_voice_pills"]
         sb_voice_choice = st.pills(
             "Speaker Voice",
             options=VOICE_BUTTON_OPTIONS,
@@ -1836,17 +2151,17 @@ with st.sidebar:
             m_c = vg.get("male", 0)
             f_c = vg.get("female", 0)
             if m_c or f_c:
-                st.caption(f"🎭 Auto-Detected: **{m_c} 👨 Piseth (ប្រុស)** • **{f_c} 👩 Sreymom (ស្រី)**")
+                st.caption(f"🎭 **និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ**: **{m_c} 👨 Piseth** + **{f_c} 👩 Sreymom**")
             else:
                 det_sb = st.session_state.get("detected_voice_info")
                 if det_sb:
                     st.caption(f"🎯 Default: **{det_sb.get('icon', '🎙️')} {det_sb.get('name', 'Piseth Neural')}** ({det_sb.get('pitch', 130)} Hz)")
                 else:
-                    st.caption("🎯 Auto-Detect: ចាប់សម្លេងតួអង្គប្រុស (Piseth 👨) ឬ ស្រី (Sreymom 👩)")
+                    st.caption("🎭 ចាប់សម្លេងតួអង្គប្រុស & ស្រី (Piseth 👨 + Sreymom 👩) ក្នុងវិដេអូតែមួយ")
         elif chosen_voice == "km-KH-PisethNeural":
-            st.caption("👨 Selected: **Piseth Neural** (Khmer Male / ប្រុស)")
+            st.caption("👨 សម្លេងប្រុសតែម្នាក់ឯង: **Piseth Neural** (Khmer Male / ប្រុស)")
         elif chosen_voice == "km-KH-SreymomNeural":
-            st.caption("👩 Selected: **Sreymom Neural** (Khmer Female / ស្រី)")
+            st.caption("👩 សម្លេងស្រីតែម្នាក់ឯង: **Sreymom Neural** (Khmer Female / ស្រី)")
 
         with st.expander("🌐 More International Voices"):
             more_voices = [k for k in EDGE_VOICES.keys() if k not in VOICE_BUTTON_OPTIONS]
@@ -1955,6 +2270,21 @@ else:
     ])
     tab_customers = None
 
+# Global Video Preview Banner if video is ready
+if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
+    with st.expander("🎬 **ទស្សនាវិដេអូដែលបានបញ្ចូលសម្លេងរួចរាល់ (Click to Watch Dubbed Video Preview)**", expanded=False):
+        render_video_preview(st.session_state.output_video_path)
+        with open(st.session_state.output_video_path, "rb") as vf_top:
+            v_top_bytes = vf_top.read()
+        st.download_button(
+            "📥 Download Dubbed Video (.MP4)",
+            data=v_top_bytes,
+            file_name="dubbed_studio_output.mp4",
+            mime="video/mp4",
+            use_container_width=True,
+            key="dl_video_top_banner",
+        )
+
 # ----------------------------------------------------
 # TAB 01: Transcribe Media
 # ----------------------------------------------------
@@ -1981,7 +2311,7 @@ with tab_transcribe:
             input_suffix = Path(uploaded_media.name).suffix.lower()
             if input_suffix not in {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv"}:
                 input_suffix = ".mp4"
-            save_media_path = STORAGE_DIR / f"uploaded_media{input_suffix}"
+            save_media_path = get_user_storage_dir() / f"uploaded_media{input_suffix}"
             if (
                 st.session_state.uploaded_media_path != str(save_media_path.resolve())
                 or not save_media_path.exists()
@@ -2035,19 +2365,21 @@ with tab_transcribe:
                 """
                 <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 10px 14px; margin: 6px 0 8px 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
-                        <span style="font-weight: 700; color: #f8fafc; font-size: 0.90rem;">🎙️ Select Voice: Auto, Piseth, or Sreymom</span>
-                        <span style="font-size: 0.70rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 7px; border-radius: 6px; font-weight: 600;">1-Click Buttons</span>
+                        <span style="font-weight: 700; color: #f8fafc; font-size: 0.90rem;">🎙️ ជម្រើសសម្លេងតួអង្គ (Voice Mode)</span>
+                        <span style="font-size: 0.70rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 7px; border-radius: 6px; font-weight: 600;">1-Click</span>
                     </div>
-                    <p style="font-size: 0.74rem; color: #94a3b8; margin: 0 0 8px 0;">Tap to select whether to auto-detect speaker pitch (Boy/Girl) or force Piseth or Sreymom.</p>
+                    <p style="font-size: 0.74rem; color: #94a3b8; margin: 0 0 8px 0;">ជ្រើសរើស <b>និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ</b> (ស្វ័យប្រវត្ត) ឬកំណត់យកតែសម្លេងប្រុស ឬសម្លេងស្រីសុទ្ធ។</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-            t1_cur_voice = st.session_state.get("voice_btn_selection", "🎭 Auto (Piseth 👨 / Sreymom 👩)")
+            t1_cur_voice = st.session_state.get("voice_btn_selection", "🎭 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Piseth 👨 + Sreymom 👩)")
             if t1_cur_voice not in VOICE_BUTTON_OPTIONS:
-                t1_cur_voice = "🎭 Auto (Piseth 👨 / Sreymom 👩)"
+                t1_cur_voice = "🎭 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Piseth 👨 + Sreymom 👩)"
 
+            if "t1_voice_pills" in st.session_state and st.session_state.t1_voice_pills not in VOICE_BUTTON_OPTIONS:
+                del st.session_state["t1_voice_pills"]
             t1_voice_choice = st.pills(
                 "Voice-Over Speaker",
                 options=VOICE_BUTTON_OPTIONS,
@@ -2065,17 +2397,17 @@ with tab_transcribe:
                 m_c = vg.get("male", 0)
                 f_c = vg.get("female", 0)
                 if m_c or f_c:
-                    st.caption(f"🎭 Auto Character Detection: **{m_c} 👨 Piseth (ប្រុស)** • **{f_c} 👩 Sreymom (ស្រី)**")
+                    st.caption(f"🎭 **និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ**: **{m_c} 👨 Piseth (ប្រុស)** + **{f_c} 👩 Sreymom (ស្រី)**")
                 else:
                     det = st.session_state.get("detected_voice_info")
                     if det:
                         st.caption(f"🎯 Default: **{det.get('icon', '🎙️')} {det.get('name', 'Piseth Neural')}** ({det.get('pitch', 130)} Hz)")
                     else:
-                        st.caption("🎭 ចាប់សម្លេងតួអង្គស្វ័យប្រវត្តិ (Boy/Male <165Hz ➔ Piseth, Girl/Female ≥165Hz ➔ Sreymom)")
+                        st.caption("🎭 ចាប់សម្លេងតួអង្គស្វ័យប្រវត្តិ (តួប្រុស ➔ Piseth 👨 + តួស្រី ➔ Sreymom 👩 ក្នុងវិដេអូតែមួយ)")
             elif active_t1_voice == "km-KH-PisethNeural":
-                st.caption("👨 Active Voice: **Piseth Neural** (Khmer Male Voice / ប្រុស)")
+                st.caption("👨 សម្លេងប្រុសតែម្នាក់ឯង: **Piseth Neural** (Khmer Male Voice / ប្រុស)")
             elif active_t1_voice == "km-KH-SreymomNeural":
-                st.caption("👩 Active Voice: **Sreymom Neural** (Khmer Female Voice / ស្រី)")
+                st.caption("👩 សម្លេងស្រីតែម្នាក់ឯង: **Sreymom Neural** (Khmer Female Voice / ស្រី)")
         auto_video_dub = st.checkbox(
             "🎬 Auto-send to Video Studio & render dubbed video when done",
             value=True,
@@ -2239,7 +2571,7 @@ with tab_transcribe:
 
                         if auto_video_dub and st.session_state.is_video and st.session_state.uploaded_media_path and st.session_state.dubbed_audio_path:
                             with st.spinner("🎬 Sending to Video Studio & rendering dubbed video..."):
-                                srt_temp = STORAGE_DIR / "burn_subtitles.srt"
+                                srt_temp = get_user_storage_dir() / "burn_subtitles.srt"
                                 srt_temp.write_text(st.session_state.khmer_srt, encoding="utf-8")
                                 final_v = process_video_dubbing(
                                     video_path=st.session_state.uploaded_media_path,
@@ -2253,11 +2585,48 @@ with tab_transcribe:
                                     orig_voice_vol=t1_orig_voice_vol,
                                 )
                                 st.session_state.output_video_path = final_v
-                                st.success("🎉 Video Studio production complete! Dubbed video preview is ready below.")
+                                st.success("🎉 ដំណើរការផលិតវិដេអូបានចប់សព្វគ្រប់ 100%! (Dubbing Complete!)")
+                                st.markdown("#### 🎬 ទស្សនាវិដេអូដែលបានបញ្ចូលសម្លេង (Dubbed Video Preview):")
+                                render_video_preview(final_v)
+                                with open(final_v, "rb") as vf_col1:
+                                    v_done_b1 = vf_col1.read()
+                                st.download_button(
+                                    "📥 Download Dubbed Video (.MP4)",
+                                    data=v_done_b1,
+                                    file_name="dubbed_studio_output.mp4",
+                                    mime="video/mp4",
+                                    use_container_width=True,
+                                    key="dl_video_col1_immediate",
+                                )
             except Exception as e:
                 st.error(f"Error: {e}")
 
     with col2:
+        if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
+            st.markdown(
+                """
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-weight: 700; color: #34d399; font-size: 1rem;">🎬 វិដេអូដែលបានផលិតរួចរាល់ (Dubbed Video Preview)</span>
+                        <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Ready to Watch</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">ចុច Play ខាងក្រោមដើម្បីទស្សនាវិដេអូដែលមានសម្លេងតួអង្គប្រុស & ស្រីឆ្លាស់គ្នា!</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            render_video_preview(st.session_state.output_video_path)
+            with open(st.session_state.output_video_path, "rb") as vf:
+                v_bytes_t1 = vf.read()
+            st.download_button(
+                "📥 Download Dubbed Video (.MP4)",
+                data=v_bytes_t1,
+                file_name="dubbed_studio_output.mp4",
+                mime="video/mp4",
+                use_container_width=True,
+                key="dl_video_tab1",
+            )
+
         if st.session_state.source_srt:
             subs = parse_srt(st.session_state.source_srt)
             duration_sec = (subs[-1].end if subs else 0) / 1000
@@ -2276,20 +2645,6 @@ with tab_transcribe:
             if mc3 and det_v_col2:
                 with mc3:
                     st.markdown(f'<div class="metric-card"><div class="metric-value" style="font-size: 1.1rem;">{det_v_col2.get("icon", "🎙️")} {det_v_col2.get("gender", "Male")}</div><div class="metric-label">{det_v_col2.get("name", "Piseth").split()[0]} ({det_v_col2.get("pitch", 130)} Hz)</div></div>', unsafe_allow_html=True)
-            
-            if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
-                st.markdown("#### 🎬 Final Dubbed Video (Video Studio)")
-                st.video(st.session_state.output_video_path)
-                with open(st.session_state.output_video_path, "rb") as vf:
-                    v_bytes_t1 = vf.read()
-                st.download_button(
-                    "📥 Download Dubbed Video (.MP4)",
-                    data=v_bytes_t1,
-                    file_name="dubbed_studio_output.mp4",
-                    mime="video/mp4",
-                    use_container_width=True,
-                    key="dl_video_tab1",
-                )
 
             if st.session_state.dubbed_audio_bytes:
                 st.markdown("#### 🎧 Generated Voice-Over Audio")
@@ -2306,6 +2661,15 @@ with tab_transcribe:
             if st.session_state.khmer_srt:
                 p_tab1, p_tab2 = st.tabs(["🇰🇭 Khmer Subtitles (Auto-Ready)", "📄 Source Subtitles"])
                 with p_tab1:
+                    if has_thai_characters(st.session_state.khmer_srt):
+                        st.error("⚠️ **រកឃើញអក្សរថៃក្នុងអត្ថបទ (Thai Language Detected)**: ចុចប៊ូតុងខាងក្រោមដើម្បីប្តូរទៅជាភាសាខ្មែរ 100% ភ្លាមៗ!")
+                        if st.button("🇰🇭 ប្តូរអក្សរថៃទាំងអស់ទៅជាភាសាខ្មែរ 100% (Clean All Thai to Khmer)", type="primary", use_container_width=True, key="btn_fix_thai_tab1"):
+                            with st.spinner("កំពុងប្តូរអក្សរថៃទៅជាភាសាខ្មែរ 100%..."):
+                                cur_subs = parse_srt(st.session_state.khmer_srt)
+                                fixed_subs = purge_and_enforce_khmer(cur_subs, gemini_key=gemini_key, openai_key=openai_key, model_name=pipeline_model)
+                                st.session_state.khmer_srt = render_srt(fixed_subs)
+                                st.toast("✅ បានប្តូរអក្សរថៃទៅជាភាសាខ្មែរ 100% ដោយជោគជ័យ!", icon="🇰🇭")
+                                st.rerun()
                     st.markdown(f'<div class="srt-box">{escape(st.session_state.khmer_srt[:3000])}</div>', unsafe_allow_html=True)
                     st.download_button(
                         "📥 Download Khmer SRT",
@@ -2396,7 +2760,7 @@ with tab_translate:
                         translated_subs = [Subtitle(s.index, s.start, s.end, ln) for s, ln in zip(source_subs, lines)]
                     elif trans_mode == "Google Gemini API":
                         with st.spinner("Translating with Gemini..."):
-                            g_model = pipeline_model if pipeline_model.startswith("gemini-") else "gemini-3.5-flash"
+                            g_model = pipeline_model if (pipeline_model and pipeline_model.startswith("gemini-")) else "gemini-flash-latest"
                             translated_subs = translate_subtitles_with_gemini(source_subs, source_language, gemini_key, g_model)
                     elif trans_mode == "OpenAI (GPT-4o Mini)":
                         with st.spinner("Translating with GPT-4o Mini..."):
@@ -2405,6 +2769,7 @@ with tab_translate:
                         with st.spinner("Translating via Gemini with automatic fallback..."):
                             translated_subs = run_auto_translation(source_subs, source_language, gemini_key, openai_key, pipeline_model)
                     
+                    translated_subs = purge_and_enforce_khmer(translated_subs, source_language=source_language, gemini_key=gemini_key, openai_key=openai_key, model_name=pipeline_model)
                     st.session_state.khmer_srt = render_srt(translated_subs)
                     st.success("Translation complete!")
 
@@ -2445,7 +2810,7 @@ with tab_translate:
 
                         if auto_video_dub_t2 and st.session_state.is_video and st.session_state.uploaded_media_path and st.session_state.dubbed_audio_path:
                             with st.spinner("🎬 Sending to Video Studio & rendering dubbed video..."):
-                                srt_temp = STORAGE_DIR / "burn_subtitles.srt"
+                                srt_temp = get_user_storage_dir() / "burn_subtitles.srt"
                                 srt_temp.write_text(st.session_state.khmer_srt, encoding="utf-8")
                                 final_v = process_video_dubbing(
                                     video_path=st.session_state.uploaded_media_path,
@@ -2459,14 +2824,37 @@ with tab_translate:
                                     orig_voice_vol=float(st.session_state.get("orig_voice_vol", 0.15)),
                                 )
                                 st.session_state.output_video_path = final_v
-                                st.success("🎉 Video Studio production complete! Dubbed video preview is ready on the right.")
+                                st.success("🎉 ដំណើរការផលិតវិដេអូបានចប់សព្វគ្រប់ 100%! (Dubbing Complete!)")
+                                st.markdown("#### 🎬 ទស្សនាវិដេអូដែលបានបញ្ចូលសម្លេង (Dubbed Video Preview):")
+                                render_video_preview(final_v)
+                                with open(final_v, "rb") as vf_col2:
+                                    v_done_b2 = vf_col2.read()
+                                st.download_button(
+                                    "📥 Download Dubbed Video (.MP4)",
+                                    data=v_done_b2,
+                                    file_name="dubbed_studio_output.mp4",
+                                    mime="video/mp4",
+                                    use_container_width=True,
+                                    key="dl_video_t2_immediate",
+                                )
                 except Exception as e:
                     st.error(f"Translation Error: {e}")
 
         with t_col2:
             if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
-                st.markdown("#### 🎬 Final Dubbed Video (Video Studio)")
-                st.video(st.session_state.output_video_path)
+                st.markdown(
+                    """
+                    <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-weight: 700; color: #34d399; font-size: 1rem;">🎬 វិដេអូដែលបានផលិតរួចរាល់ (Dubbed Video Preview)</span>
+                            <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Ready to Watch</span>
+                        </div>
+                        <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">ចុច Play ខាងក្រោមដើម្បីទស្សនាវិដេអូដែលមានសម្លេងតួអង្គប្រុស & ស្រីឆ្លាស់គ្នា!</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                render_video_preview(st.session_state.output_video_path)
                 with open(st.session_state.output_video_path, "rb") as vf:
                     v_bytes_t2 = vf.read()
                 st.download_button(
@@ -2493,6 +2881,15 @@ with tab_translate:
             if st.session_state.khmer_srt:
                 k_subs = parse_srt(st.session_state.khmer_srt)
                 st.markdown(f'<div class="metric-card"><div class="metric-value">{len(k_subs)}</div><div class="metric-label">Khmer Segments Ready</div></div>', unsafe_allow_html=True)
+                if has_thai_characters(st.session_state.khmer_srt):
+                    st.error("⚠️ **រកឃើញអក្សរថៃក្នុងអត្ថបទ (Thai Language Detected)**: ចុចប៊ូតុងខាងក្រោមដើម្បីប្តូរទៅជាភាសាខ្មែរ 100% ភ្លាមៗ!")
+                    if st.button("🇰🇭 ប្តូរអក្សរថៃទាំងអស់ទៅជាភាសាខ្មែរ 100% (Clean All Thai to Khmer)", type="primary", use_container_width=True, key="btn_fix_thai_tab2"):
+                        with st.spinner("កំពុងប្តូរអក្សរថៃទៅជាភាសាខ្មែរ 100%..."):
+                            cur_subs = parse_srt(st.session_state.khmer_srt)
+                            fixed_subs = purge_and_enforce_khmer(cur_subs, gemini_key=gemini_key, openai_key=openai_key, model_name=pipeline_model)
+                            st.session_state.khmer_srt = render_srt(fixed_subs)
+                            st.toast("✅ បានប្តូរអក្សរថៃទៅជាភាសាខ្មែរ 100% ដោយជោគជ័យ!", icon="🇰🇭")
+                            st.rerun()
                 st.markdown("#### Translated Khmer SRT Preview")
                 st.markdown(f'<div class="srt-box">{escape(st.session_state.khmer_srt[:3000])}</div>', unsafe_allow_html=True)
                 st.download_button(
@@ -2539,6 +2936,15 @@ with tab_editor_voice:
 
         st.markdown("#### 📝 Subtitle Translation & Audio Editor")
 
+        if has_thai_characters(active_srt):
+            st.error("⚠️ **រកឃើញអក្សរថៃក្នុងអត្ថបទ (Thai Characters Detected in Subtitles)**: ចុចប៊ូតុងខាងក្រោមដើម្បីប្តូរទៅជាភាសាខ្មែរ 100% ភ្លាមៗ!")
+            if st.button("🇰🇭 ប្តូរអក្សរថៃទាំងអស់ទៅជាភាសាខ្មែរ 100% (Clean All Thai to Khmer)", type="primary", use_container_width=True, key="btn_fix_thai_tab3"):
+                with st.spinner("កំពុងប្តូរអក្សរថៃទៅជាភាសាខ្មែរ 100%..."):
+                    fixed_subs = purge_and_enforce_khmer(subs_list, gemini_key=gemini_key, openai_key=openai_key, model_name=pipeline_model)
+                    st.session_state.khmer_srt = render_srt(fixed_subs)
+                    st.toast("✅ បានប្តូរអក្សរថៃទៅជាភាសាខ្មែរ 100% ដោយជោគជ័យ!", icon="🇰🇭")
+                    st.rerun()
+
         # Speaker Voice Assignment Toolbar
         sub_v_dict = st.session_state.get("subtitle_voices", {})
         m_c = sum(1 for v in sub_v_dict.values() if "Piseth" in v)
@@ -2548,12 +2954,12 @@ with tab_editor_voice:
             f"""
             <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 10px 14px; margin: 10px 0 12px 0;">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
-                    <span style="font-weight: 700; color: #f8fafc; font-size: 0.92rem;">🎭 ការបែងចែកសម្លេងតួអង្គ (Character Voice: Piseth 👨 / Sreymom 👩)</span>
-                    <span style="font-size: 0.75rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 3px 10px; border-radius: 8px; font-weight: 600;">
-                        👨 Piseth: {m_c} ឃ្លា • 👩 Sreymom: {f_c} ឃ្លា
+                    <span style="font-weight: 700; color: #f8fafc; font-size: 0.95rem;">🎬 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Multi-Speaker Dialogue)</span>
+                    <span style="font-size: 0.8rem; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 4px 12px; border-radius: 8px; font-weight: 700; border: 1px solid rgba(52, 211, 153, 0.3);">
+                        ✨ រួមគ្នាក្នុងវិដេអូតែមួយ: 👨 Piseth ({m_c} ឃ្លា) + 👩 Sreymom ({f_c} ឃ្លា)
                     </span>
                 </div>
-                <p style="font-size: 0.76rem; color: #94a3b8; margin: 4px 0 0 0;">ប្រព័ន្ធចាប់សម្លេងតួអង្គស្វ័យប្រវត្តិតាមរយៈកម្រិត Pitch នៃឃ្លានីមួយៗ (សម្លេងប្រុស ➔ Piseth 👨, សម្លេងស្រី ➔ Sreymom 👩)។</p>
+                <p style="font-size: 0.76rem; color: #94a3b8; margin: 4px 0 0 0;">ឃ្លានីមួយៗត្រូវបានកំណត់សម្លេងតាមតួអង្គ (សម្លេងប្រុស ➔ Piseth 👨, សម្លេងស្រី ➔ Sreymom 👩) ហើយបញ្ចូលគ្នាក្នុងវិដេអូតែមួយ។ អ្នកអាចចុចប្តូរតួអង្គសម្រាប់ឃ្លានីមួយៗខាងក្រោមបានភ្លាមៗ។</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2661,13 +3067,13 @@ with tab_editor_voice:
                 cur_line_voice = det_v_tab3.get("voice", "km-KH-PisethNeural")
 
             v_options = {
-                "👨 Piseth (ប្រុស / Boy)": "km-KH-PisethNeural",
-                "👩 Sreymom (ស្រី / Girl)": "km-KH-SreymomNeural",
+                "👨 Piseth (ប្រុស)": "km-KH-PisethNeural",
+                "👩 Sreymom (ស្រី)": "km-KH-SreymomNeural",
             }
             inv_v = {v: k for k, v in v_options.items()}
-            cur_label = inv_v.get(cur_line_voice, "👨 Piseth (ប្រុស / Boy)")
+            cur_label = inv_v.get(cur_line_voice, "👨 Piseth (ប្រុស)")
 
-            st.caption("Voice for this Segment:")
+            st.caption("តួអង្គនិយាយសម្រាប់ឃ្លានេះ (Speaker Voice):")
             chosen_card_voice_label = st.pills(
                 "Speaker Voice for Segment",
                 options=list(v_options.keys()),
@@ -2678,6 +3084,13 @@ with tab_editor_voice:
             if not chosen_card_voice_label:
                 chosen_card_voice_label = cur_label
             chosen_card_voice = v_options[chosen_card_voice_label]
+
+            # Auto-save immediately when user toggles voice pill
+            if cur_sub.index not in sub_voices or sub_voices[cur_sub.index] != chosen_card_voice:
+                st.session_state.setdefault("subtitle_voices", {})[cur_sub.index] = chosen_card_voice
+                m_c_new = sum(1 for v in st.session_state.subtitle_voices.values() if "Piseth" in v)
+                f_c_new = sum(1 for v in st.session_state.subtitle_voices.values() if "Sreymom" in v)
+                st.session_state.voice_gender_counts = {"male": m_c_new, "female": f_c_new}
 
             edited_khmer_text = st.text_area(
                 "Dubbed (Khmer) Text",
@@ -2690,7 +3103,17 @@ with tab_editor_voice:
             act_col1, act_col2 = st.columns([1.2, 1], gap="small")
             with act_col1:
                 if st.button(f"💾 Save Segment #{cur_idx + 1}", type="primary", use_container_width=True):
-                    subs_list[cur_idx].text = edited_khmer_text.strip()
+                    saved_text = edited_khmer_text.strip()
+                    if has_thai_characters(saved_text):
+                        st.info("🧹 Converting Thai characters to 100% Khmer...")
+                        cleaned_list = purge_and_enforce_khmer(
+                            [Subtitle(cur_sub.index, cur_sub.start, cur_sub.end, saved_text)],
+                            gemini_key=gemini_key,
+                            openai_key=openai_key,
+                            model_name=pipeline_model,
+                        )
+                        saved_text = cleaned_list[0].text
+                    subs_list[cur_idx].text = saved_text
                     st.session_state.setdefault("subtitle_voices", {})[cur_sub.index] = chosen_card_voice
                     st.session_state.khmer_srt = render_srt(subs_list)
                     st.toast(f"✅ Segment #{cur_idx + 1} saved ({chosen_card_voice_label.split()[1]})!", icon="💾")
@@ -2769,6 +3192,14 @@ with tab_editor_voice:
                         )
                         r_voice = str(row.get("Speaker Voice", ""))
                         st.session_state.subtitle_voices[sub_id] = "km-KH-SreymomNeural" if "Sreymom" in r_voice else "km-KH-PisethNeural"
+                    if any(has_thai_characters(sub.text) for sub in updated_subtitles):
+                        st.info("🧹 Automatically cleaning and translating detected Thai text into 100% Khmer...")
+                        updated_subtitles = purge_and_enforce_khmer(
+                            updated_subtitles,
+                            gemini_key=gemini_key,
+                            openai_key=openai_key,
+                            model_name=pipeline_model,
+                        )
                     st.session_state.khmer_srt = render_srt(updated_subtitles)
                     st.success("Subtitle edits and voice assignments saved successfully!")
                     st.rerun()
@@ -2797,17 +3228,28 @@ with tab_editor_voice:
             vg = st.session_state.get("voice_gender_counts", {})
             m_t3 = vg.get("male", 0)
             f_t3 = vg.get("female", 0)
-            disp_v_t3 = f"Auto Detect (👨 Piseth {m_t3} / 👩 Sreymom {f_t3})" if (m_t3 or f_t3) else "Auto Detect (Piseth / Sreymom)"
+            st.markdown(
+                f"""
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin: 8px 0 12px 0;">
+                    <div style="font-weight: 700; color: #34d399; font-size: 0.95rem;">🎬 និយាយប្រុសផងស្រីផងក្នុងវិដេអូតែមួយ (Multi-Speaker in One Video)</div>
+                    <div style="color: #f8fafc; font-size: 0.84rem; margin-top: 4px;">
+                        👨 Piseth: <b>{m_t3}</b> ឃ្លា • 👩 Sreymom: <b>{f_t3}</b> ឃ្លា 👉 <b>នឹងបញ្ចូលគ្នាក្នុងសម្លេងតែមួយសម្រាប់វីដេអូ</b>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            disp_v_t3 = f"និយាយប្រុសផងស្រីផង (👨 Piseth {m_t3} + 👩 Sreymom {f_t3})"
         elif "Piseth" in chosen_voice:
-            disp_v_t3 = "Piseth Neural (Boy)"
+            disp_v_t3 = "Piseth Neural (ប្រុសតែម្នាក់ឯង)"
         elif "Sreymom" in chosen_voice:
-            disp_v_t3 = "Sreymom Neural (Girl)"
+            disp_v_t3 = "Sreymom Neural (ស្រីតែម្នាក់ឯង)"
 
         custom_voice_count = len(st.session_state.get("subtitle_voices", {}))
-        voice_note = f"Voice: **{disp_v_t3}**" + (f" ({custom_voice_count} lines assigned)" if custom_voice_count else "")
+        voice_note = f"Mode: **{disp_v_t3}**" + (f" ({custom_voice_count} lines assigned)" if custom_voice_count else "")
         st.caption(f"Engine: **{tts_engine}** • {voice_note} • Speed: **{voice_speed}x**")
         
-        btn_synth = st.button("⚡ Generate Full Synchronized Voice-Over Track", type="primary", use_container_width=True)
+        btn_synth = st.button("⚡ Generate Full Voice-Over Track (និយាយប្រុសផងស្រីផង)", type="primary", use_container_width=True)
         if btn_synth:
             try:
                 progress_bar = st.progress(0.0)
@@ -2869,7 +3311,7 @@ with tab_video:
         else:
             custom_video = st.file_uploader("Upload Target Video for Dubbing", type=["mp4", "mov", "webm", "mkv"], key="custom_video_uploader")
             if custom_video:
-                save_path = STORAGE_DIR / f"target_video{Path(custom_video.name).suffix}"
+                save_path = get_user_storage_dir() / f"target_video{Path(custom_video.name).suffix}"
                 save_path.write_bytes(custom_video.getvalue())
                 video_to_use = str(save_path.resolve())
             else:
@@ -2893,10 +3335,23 @@ with tab_video:
             )
         else:
             subtitle_source = "Khmer Subtitles"
-        
+
+        v_counts = st.session_state.get("voice_gender_counts", {})
+        m_v = v_counts.get("male", 0)
+        f_v = v_counts.get("female", 0)
         st.markdown(
-            """
-            <div style="background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 12px 14px; margin: 10px 0 14px 0;">
+            f"""
+            <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin: 10px 0 14px 0;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="font-weight: 700; font-size: 0.92rem; color: #34d399;">🎬 វិដេអូតែមួយនិយាយទាំងប្រុស (Piseth) និងស្រី (Sreymom)</span>
+                    <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Multi-Speaker Video</span>
+                </div>
+                <p style="font-size: 0.78rem; color: #94a3b8; margin: 0;">
+                    {f"👨 Piseth: <b>{m_v}</b> ឃ្លា • 👩 Sreymom: <b>{f_v}</b> ឃ្លា • " if (m_v or f_v) else ""}
+                    វិដេអូដែលចេញមកនឹងមានសម្លេងតួអង្គប្រុស & ស្រីឆ្លាស់គ្នាតាមសាច់រឿងក្នុងខ្សែវិដេអូតែមួយគត់។
+                </p>
+            </div>
+            <div style="background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 12px 14px; margin: 0 0 14px 0;">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                     <span style="font-weight: 700; font-size: 0.92rem; color: #f8fafc;">🎛️ Audio Controls (Music & Original Voice)</span>
                     <span style="font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 8px; border-radius: 6px; font-weight: 600;">Dubbing Mix</span>
@@ -2974,7 +3429,7 @@ with tab_video:
                 if burn_subs and not selected_srt_content:
                     st.error("No subtitles available to burn. Please complete Step 1 or 2.")
                 else:
-                    srt_temp = STORAGE_DIR / "burn_subtitles.srt"
+                    srt_temp = get_user_storage_dir() / "burn_subtitles.srt"
                     if selected_srt_content:
                         srt_temp.write_text(selected_srt_content, encoding="utf-8")
                     
@@ -2997,16 +3452,38 @@ with tab_video:
                                     orig_voice_vol=t4_orig_voice_vol,
                                 )
                                 st.session_state.output_video_path = final_video_path
-                                st.success("Video rendering complete!")
+                                st.success("🎉 ដំណើរការផលិតវិដេអូបានចប់សព្វគ្រប់ 100%! (Dubbing Complete!)")
+                                st.markdown("#### 🎬 ទស្សនាវិដេអូដែលបានបញ្ចូលសម្លេង (Dubbed Video Preview):")
+                                render_video_preview(final_video_path)
+                                with open(final_video_path, "rb") as vf_col4:
+                                    video_data_done = vf_col4.read()
+                                st.download_button(
+                                    "📥 Download Dubbed Video (.MP4)",
+                                    data=video_data_done,
+                                    file_name="dubbed_studio_output.mp4",
+                                    mime="video/mp4",
+                                    use_container_width=True,
+                                    key="dl_video_t4_immediate",
+                                )
                             except Exception as video_err:
                                 st.error(f"Video rendering failed: {video_err}")
 
     with v_col2:
         if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
             v_size_mb = Path(st.session_state.output_video_path).stat().st_size / (1024 * 1024)
-            st.markdown(f'<div class="metric-card"><div class="metric-value">{v_size_mb:.2f} MB</div><div class="metric-label">Dubbed Video Size</div></div>', unsafe_allow_html=True)
-            st.markdown("#### 📺 Video Preview")
-            st.video(st.session_state.output_video_path)
+            st.markdown(
+                f"""
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-weight: 700; color: #34d399; font-size: 1rem;">🎬 វិដេអូដែលបានផលិតរួចរាល់ ({v_size_mb:.2f} MB)</span>
+                        <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Ready to Watch</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">ចុច Play ខាងក្រោមដើម្បីទស្សនាវិដេអូដែលមានសម្លេងតួអង្គប្រុស & ស្រីឆ្លាស់គ្នា!</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            render_video_preview(st.session_state.output_video_path)
             
             with open(st.session_state.output_video_path, "rb") as vf:
                 video_data = vf.read()
@@ -3234,6 +3711,16 @@ if is_admin_user and tab_customers is not None:
                     dev_name = last_dev.get("device_name", "Not logged in yet") if isinstance(last_dev, dict) else str(last_dev or "Not logged in yet")
                     dev_ip = last_dev.get("ip", "N/A") if isinstance(last_dev, dict) else "N/A"
                     last_login = info.get("last_login", last_dev.get("login_time", "N/A") if isinstance(last_dev, dict) else "N/A") if isinstance(info, dict) else "N/A"
+                    active_token = info.get("active_session_token", "") if isinstance(info, dict) else ""
+                    active_device = info.get("active_device_name", "") if isinstance(info, dict) else ""
+                    is_online = bool(active_token)
+                    online_badge = (
+                        '<span style="background:rgba(16,185,129,0.18);color:#34d399;font-size:0.72rem;font-weight:700;'
+                        'padding:2px 9px;border-radius:999px;border:1px solid rgba(16,185,129,0.4);">🟢 Online</span>'
+                        if is_online else
+                        '<span style="background:rgba(100,116,139,0.18);color:#94a3b8;font-size:0.72rem;font-weight:700;'
+                        'padding:2px 9px;border-radius:999px;border:1px solid rgba(100,116,139,0.3);">⚫ Offline</span>'
+                    )
 
                     role_badge = '<span class="badge-status admin">🛡️ Admin</span>' if is_adm else '<span class="badge-status approved">✅ Active Customer</span>'
                     avatar_style = 'background:rgba(168,85,247,0.18); color:#c084fc;' if is_adm else 'background:rgba(16,185,129,0.18); color:#34d399;'
@@ -3249,11 +3736,11 @@ if is_admin_user and tab_customers is not None:
                                         <div style="font-size:0.82rem; color:#94a3b8;">{escape(name)}</div>
                                     </div>
                                 </div>
-                                {role_badge}
+                                <div style="display:flex;gap:6px;align-items:center;">{online_badge} {role_badge}</div>
                             </div>
                             <div class="customer-info-grid">
                                 <div class="customer-info-item">📞 Contact: <span>{escape(contact)}</span></div>
-                                <div class="customer-info-item">📱 Saved Device: <span style="color:#38bdf8;">{escape(dev_name)}</span></div>
+                                <div class="customer-info-item">📱 Active Device: <span style="color:#38bdf8;">{escape(active_device or dev_name)}</span></div>
                                 <div class="customer-info-item">🌐 IP: <span>{escape(dev_ip)}</span></div>
                                 <div class="customer-info-item">🕒 Last Login: <span>{escape(last_login)}</span></div>
                                 <div class="customer-info-item">📅 Registered: <span>{escape(reg_date)}</span></div>
@@ -3265,7 +3752,7 @@ if is_admin_user and tab_customers is not None:
                     )
 
                     if not is_adm:
-                        c_act1, c_act2, _ = st.columns([1.2, 1, 2], gap="small")
+                        c_act1, c_act2, c_act3, _ = st.columns([1.2, 1, 1.2, 1.2], gap="small")
                         with c_act1:
                             with st.popover(f"🔑 Reset Password", use_container_width=True):
                                 st.markdown(f"**Reset Password for `{u}`**")
@@ -3287,6 +3774,16 @@ if is_admin_user and tab_customers is not None:
                                 save_saved_config({"auth_users": all_auth_users})
                                 st.toast(f"Removed account for '{u}'.", icon="🗑️")
                                 st.rerun()
+                        with c_act3:
+                            # Admin force-disconnect / kick session
+                            kick_label = "🔌 Kick Session" if is_online else "🔌 No Session"
+                            if st.button(kick_label, key=f"t5_kick_{u}", disabled=not is_online, use_container_width=True):
+                                if isinstance(all_auth_users.get(u), dict):
+                                    all_auth_users[u]["active_session_token"] = ""
+                                    all_auth_users[u]["active_device_name"] = ""
+                                    save_saved_config({"auth_users": all_auth_users})
+                                    st.toast(f"🔌 Session disconnected for '{u}'. They will be logged out on next action.", icon="⚡")
+                                    st.rerun()
                         st.write("")
             elif "Active" in status_filter:
                 st.info("No active accounts match your search.")
