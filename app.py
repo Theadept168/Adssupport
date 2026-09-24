@@ -150,61 +150,58 @@ def render_contact_admin(key_prefix: str = "main", compact: bool = False):
     phone_clean = re.sub(r"[^\d+]", "", phone)
 
     if compact:
-        st.markdown(
-            f"""
-            <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 10px 14px; margin: 8px 0;">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-                    <span style="font-weight: 700; color: #38bdf8; font-size: 0.88rem;">💬 Contact Admin</span>
-                    <span style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px;">Support</span>
-                </div>
-                {f'<p style="font-size: 0.76rem; color: #94a3b8; margin: 0 0 8px 0;">{escape(note)}</p>' if note else ''}
-                <div style="display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem;">
-                    {f'<div>✈️ Telegram: <a href="{escape(tg_url)}" target="_blank" style="color: #38bdf8; font-weight: 600; text-decoration: none;">{escape(tg)}</a></div>' if tg else ''}
-                    {f'<div>📞 Phone: <a href="tel:{escape(phone_clean)}" style="color: #34d399; font-weight: 600; text-decoration: none;">{escape(phone)}</a></div>' if phone else ''}
-                    {f'<div>✉️ Email: <a href="mailto:{escape(email)}" style="color: #cbd5e1; text-decoration: none;">{escape(email)}</a></div>' if email else ''}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        tg_html = f'<div style="margin-top: 4px;">✈️ Telegram: <a href="{escape(tg_url)}" target="_blank" style="color: #38bdf8; font-weight: 600; text-decoration: none;">{escape(tg)}</a></div>' if tg else ''
+        phone_html = f'<div style="margin-top: 4px;">📞 Phone: <a href="tel:{escape(phone_clean)}" style="color: #34d399; font-weight: 600; text-decoration: none;">{escape(phone)}</a></div>' if phone else ''
+        email_html = f'<div style="margin-top: 4px;">✉️ Email: <a href="mailto:{escape(email)}" style="color: #cbd5e1; text-decoration: none;">{escape(email)}</a></div>' if email else ''
+        note_html = f'<p style="font-size: 0.76rem; color: #94a3b8; margin: 0 0 8px 0;">{escape(note)}</p>' if note else ''
+
+        html = f"""<div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 10px 14px; margin: 8px 0;">
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+<span style="font-weight: 700; color: #38bdf8; font-size: 0.88rem;">💬 Contact Admin</span>
+<span style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px;">Support</span>
+</div>
+{note_html}
+<div style="display: flex; flex-direction: column; font-size: 0.82rem;">
+{tg_html}
+{phone_html}
+{email_html}
+</div>
+</div>"""
+        st.markdown(html, unsafe_allow_html=True)
     else:
-        st.markdown(
-            f"""
-            <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 14px; padding: 16px 18px; margin: 12px 0;">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                    <div style="font-size: 1.02rem; font-weight: 700; color: #38bdf8;">💬 ទាក់ទងទៅកាន់ Admin (Contact Administrator)</div>
-                    <span style="background: rgba(56, 189, 248, 0.18); color: #38bdf8; font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;">Official Support</span>
-                </div>
-                <p style="font-size: 0.84rem; color: #cbd5e1; margin: 0 0 12px 0;">
-                    {escape(note) if note else "សម្រាប់សាកសួរព័ត៌មានបន្ថែម ស្នើសុំបើកគណនី ឬរាយការណ៍បញ្ហា សូមទាក់ទងមកកាន់ Admin តាមមធ្យោបាយខាងក្រោម៖"}
-                </p>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
-                    {f'''
-                    <a href="{escape(tg_url)}" target="_blank" style="text-decoration: none;">
-                        <div style="background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 10px; padding: 10px 14px; text-align: center; color: #38bdf8; font-weight: 700; font-size: 0.90rem;">
-                            ✈️ Telegram: {escape(tg)}
-                        </div>
-                    </a>
-                    ''' if tg else ''}
-                    {f'''
-                    <a href="tel:{escape(phone_clean)}" style="text-decoration: none;">
-                        <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; padding: 10px 14px; text-align: center; color: #34d399; font-weight: 700; font-size: 0.90rem;">
-                            📞 Phone: {escape(phone)}
-                        </div>
-                    </a>
-                    ''' if phone else ''}
-                    {f'''
-                    <a href="mailto:{escape(email)}" style="text-decoration: none;">
-                        <div style="background: rgba(249, 115, 22, 0.12); border: 1px solid rgba(249, 115, 22, 0.3); border-radius: 10px; padding: 10px 14px; text-align: center; color: #fb923c; font-weight: 700; font-size: 0.90rem;">
-                            ✉️ Email: {escape(email)}
-                        </div>
-                    </a>
-                    ''' if email else ''}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        tg_card = f"""<a href="{escape(tg_url)}" target="_blank" style="text-decoration: none; display: block;">
+<div style="background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 10px; padding: 12px 14px; text-align: center; color: #38bdf8; font-weight: 700; font-size: 0.92rem;">
+✈️ Telegram: {escape(tg)}
+</div>
+</a>""" if tg else ""
+
+        phone_card = f"""<a href="tel:{escape(phone_clean)}" style="text-decoration: none; display: block;">
+<div style="background: rgba(16, 185, 129, 0.14); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 10px; padding: 12px 14px; text-align: center; color: #34d399; font-weight: 700; font-size: 0.92rem;">
+📞 Phone: {escape(phone)}
+</div>
+</a>""" if phone else ""
+
+        email_card = f"""<a href="mailto:{escape(email)}" style="text-decoration: none; display: block;">
+<div style="background: rgba(249, 115, 22, 0.14); border: 1px solid rgba(249, 115, 22, 0.35); border-radius: 10px; padding: 12px 14px; text-align: center; color: #fb923c; font-weight: 700; font-size: 0.92rem;">
+✉️ Email: {escape(email)}
+</div>
+</a>""" if email else ""
+
+        note_text = escape(note) if note else "សម្រាប់សាកសួរព័ត៌មានបន្ថែម ស្នើសុំបើកគណនី ឬរាយការណ៍បញ្ហា សូមទាក់ទងមកកាន់ Admin តាមមធ្យោបាយខាងក្រោម៖"
+
+        html = f"""<div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 14px; padding: 16px 18px; margin: 12px 0;">
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+<div style="font-size: 1.02rem; font-weight: 700; color: #38bdf8;">💬 ទាក់ទងទៅកាន់ Admin (Contact Administrator)</div>
+<span style="background: rgba(56, 189, 248, 0.18); color: #38bdf8; font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;">Official Support</span>
+</div>
+<p style="font-size: 0.84rem; color: #cbd5e1; margin: 0 0 12px 0; line-height: 1.5;">{note_text}</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 6px;">
+{tg_card}
+{phone_card}
+{email_card}
+</div>
+</div>"""
+        st.markdown(html, unsafe_allow_html=True)
 
     with st.expander("✉️ ផ្ញើសារផ្ទាល់ទៅ Admin (Send In-App Message)", expanded=False):
         with st.form(key=f"form_contact_admin_{key_prefix}"):
