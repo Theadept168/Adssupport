@@ -681,20 +681,32 @@ def get_whisper_model(model_name: str):
     return whisper.load_model(model_name)
 
 
-def transcribe_media(uploaded_file, model_name: str, api_key: str) -> str:
+def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_path: Path = None) -> str:
     user_storage = get_user_storage_dir()
-    input_suffix = Path(uploaded_file.name).suffix.lower()
-    if input_suffix not in {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv"}:
-        input_suffix = ".mp4"
-    media_path = user_storage / f"uploaded_media{input_suffix}"
-    media_path.write_bytes(uploaded_file.getvalue())
+    if isinstance(uploaded_file, (str, Path)):
+        media_path = Path(uploaded_file)
+        input_suffix = media_path.suffix.lower()
+        if not media_path.exists():
+            raise FileNotFoundError(f"Media file not found: {media_path}")
+    else:
+        input_suffix = Path(uploaded_file.name).suffix.lower()
+        if input_suffix not in {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv", ".flv", ".avi", ".wmv", ".m4v"}:
+            input_suffix = ".mp4"
+        media_path = media_save_path if media_save_path else (user_storage / f"uploaded_media{input_suffix}")
+        media_path.write_bytes(uploaded_file.getvalue())
 
-    st.session_state.uploaded_media_path = str(media_path.resolve())
-    st.session_state.is_video = input_suffix in {".mp4", ".mov", ".webm", ".mkv"}
+    is_vid = input_suffix in {".mp4", ".mov", ".webm", ".mkv", ".flv", ".avi", ".wmv", ".m4v"}
+    try:
+        if hasattr(st, "session_state"):
+            st.session_state.uploaded_media_path = str(media_path.resolve())
+            st.session_state.is_video = is_vid
+    except Exception:
+        pass
 
     upload_file_path = media_path
-    if st.session_state.is_video:
-        audio_extract_path = user_storage / "temp_transcribe_audio.mp3"
+    if is_vid:
+        safe_stem = re.sub(r"[^a-zA-Z0-9_\-]", "_", media_path.stem)
+        audio_extract_path = user_storage / f"temp_transcribe_{safe_stem}_{secrets.token_hex(4)}.mp3"
         cmd = [
             FFMPEG_BIN, "-y", "-i", str(media_path),
             "-vn", "-acodec", "libmp3lame", "-b:a", "64k", "-ar", "16000",
@@ -940,14 +952,25 @@ def synthesize_single_line(text: str, engine: str, voice: str, speed: float, ele
             return AudioSegment.silent(duration=500).export(io.BytesIO(), format="wav").getvalue()
 
 
-def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, speed: float, elevenlabs_key: str = "", progress_callback=None) -> bytes:
+def synthesize_full_audio(
+    subtitles: list[Subtitle],
+    engine: str,
+    voice: str,
+    speed: float,
+    elevenlabs_key: str = "",
+    progress_callback=None,
+    media_path: str = None,
+    output_audio_path: str = None,
+    subtitle_voices_override: dict = None,
+) -> bytes:
     output = AudioSegment.silent(duration=0)
     total = len(subtitles)
 
     # Preload media audio for character voice detection when auto_detect is chosen
     media_audio = None
-    if voice == "auto_detect" and st.session_state.get("uploaded_media_path"):
-        media_p = Path(st.session_state.uploaded_media_path)
+    target_media = media_path or (st.session_state.get("uploaded_media_path") if hasattr(st, "session_state") else None)
+    if voice == "auto_detect" and target_media:
+        media_p = Path(target_media)
         if media_p.exists():
             try:
                 media_audio = AudioSegment.from_file(str(media_p))
@@ -960,7 +983,12 @@ def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, sp
             output += AudioSegment.silent(duration=target_start - len(output))
 
         # Check line-specific voice or fallback to character auto-detection (Piseth / Sreymom)
-        line_voice = st.session_state.get("subtitle_voices", {}).get(item.index) or getattr(item, "voice", "")
+        line_voice = ""
+        if subtitle_voices_override and item.index in subtitle_voices_override:
+            line_voice = subtitle_voices_override[item.index]
+        elif hasattr(st, "session_state"):
+            line_voice = st.session_state.get("subtitle_voices", {}).get(item.index) or getattr(item, "voice", "")
+
         if not line_voice:
             if voice == "auto_detect":
                 # Per-character voice detection dynamically from media audio clip
@@ -969,11 +997,12 @@ def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, sp
                         clip = media_audio[max(0, item.start):min(len(media_audio), item.end)]
                         seg_det = detect_voice_piseth_sreymom(audio_segment=clip)
                         line_voice = seg_det.get("voice", "km-KH-PisethNeural")
-                        st.session_state.setdefault("subtitle_voices", {})[item.index] = line_voice
+                        if hasattr(st, "session_state"):
+                            st.session_state.setdefault("subtitle_voices", {})[item.index] = line_voice
                     except Exception:
                         line_voice = ""
                 if not line_voice:
-                    detected = st.session_state.get("detected_voice_info", {})
+                    detected = st.session_state.get("detected_voice_info", {}) if hasattr(st, "session_state") else {}
                     line_voice = detected.get("voice", "km-KH-PisethNeural")
             else:
                 line_voice = voice
@@ -998,10 +1027,24 @@ def synthesize_full_audio(subtitles: list[Subtitle], engine: str, voice: str, sp
     final_bytes = wav_file.getvalue()
 
     # Save to disk for video multiplexing
-    user_storage = get_user_storage_dir()
-    dubbed_audio_path = user_storage / "dubbed_voiceover.wav"
-    dubbed_audio_path.write_bytes(final_bytes)
-    st.session_state.dubbed_audio_path = str(dubbed_audio_path.resolve())
+    if output_audio_path:
+        out_audio_p = Path(output_audio_path)
+        out_audio_p.parent.mkdir(parents=True, exist_ok=True)
+        out_audio_p.write_bytes(final_bytes)
+        try:
+            if hasattr(st, "session_state"):
+                st.session_state.dubbed_audio_path = str(out_audio_p.resolve())
+        except Exception:
+            pass
+    else:
+        user_storage = get_user_storage_dir()
+        dubbed_audio_path = user_storage / "dubbed_voiceover.wav"
+        dubbed_audio_path.write_bytes(final_bytes)
+        try:
+            if hasattr(st, "session_state"):
+                st.session_state.dubbed_audio_path = str(dubbed_audio_path.resolve())
+        except Exception:
+            pass
 
     return final_bytes
 
@@ -1029,9 +1072,15 @@ def process_video_dubbing(
     bg_music_vol: float = 0.20,   # Volume of background music (0.05 to 0.80)
     enable_orig_voice: bool = False, # Turn ON to keep original speaker/actor voice (documentary style)
     orig_voice_vol: float = 0.15, # Volume of original voice (0.05 to 0.60)
+    output_video_path: str = None,
 ) -> str:
     user_storage = get_user_storage_dir()
-    out_video_path = user_storage / "dubbed_output.mp4"
+    if output_video_path:
+        out_video_path = Path(output_video_path)
+        out_video_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_video_path = user_storage / "dubbed_output.mp4"
+
     if out_video_path.exists():
         try:
             out_video_path.unlink()
@@ -1176,6 +1225,229 @@ def render_video_preview(video_path: str):
         st.video(v_data, format="video/mp4")
     except Exception:
         st.video(str(p.resolve()), format="video/mp4")
+
+
+# ==========================================
+# Automated Batch Pipeline: Transcribe One Folder
+# ==========================================
+def transcribe_one_folder(
+    folder_path: str | Path = None,
+    output_folder: str | Path = None,
+    model_name: str = "gemini-flash-latest",
+    source_language: str = "auto",
+    gemini_key: str = "",
+    openai_key: str = "",
+    elevenlabs_key: str = "",
+    tts_engine: str = "Microsoft Edge Neural",
+    voice: str = "auto_detect",
+    voice_speed: float = 1.0,
+    burn_subtitles: bool = False,
+    enable_bg_music: bool = False,
+    bg_music_vol: float = 0.20,
+    enable_orig_voice: bool = False,
+    orig_voice_vol: float = 0.15,
+    dub_volume: float = 1.0,
+    progress_callback = None,
+    file_list: list = None,
+    save_only_video: bool = True,
+) -> dict:
+    """
+    Automated Batch Pipeline:
+    Transcribes media files in a folder -> Translates subtitles to natural Khmer ->
+    Synthesizes Khmer voice-over (Edge-TTS Piseth/Sreymom) -> Auto-renders dubbed video with FFmpeg.
+
+    When save_only_video=True (default), ONLY the finished rendered video (.mp4) is saved.
+    Intermediate SRT and MP3/WAV audio files are automatically cleaned up.
+    """
+    valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
+    media_files = []
+
+    if file_list:
+        for f in file_list:
+            p = Path(f)
+            if p.suffix.lower() in valid_exts and p.exists():
+                media_files.append(p)
+    elif folder_path:
+        inp_dir = Path(folder_path)
+        if not inp_dir.exists() or not inp_dir.is_dir():
+            raise FileNotFoundError(f"Folder does not exist or is not a directory: {folder_path}")
+        media_files = sorted([f for f in inp_dir.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+    else:
+        raise ValueError("Either folder_path or file_list must be provided.")
+
+    if output_folder:
+        out_dir = Path(output_folder)
+    elif folder_path:
+        out_dir = Path(folder_path) / "dubbed_outputs"
+    else:
+        out_dir = get_user_storage_dir() / "dubbed_batch_outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    total_files = len(media_files)
+    results = []
+
+    if total_files == 0:
+        return {
+            "total_files": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "output_folder": str(out_dir.resolve()),
+            "results": [],
+            "message": "No compatible media files (.mp4, .mov, .mkv, .webm, .mp3, .wav, etc.) found in folder.",
+        }
+
+    user_storage = get_user_storage_dir()
+    temp_work_dir = user_storage / "temp_batch_work"
+    temp_work_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, media_file in enumerate(media_files, 1):
+        f_name = media_file.name
+        f_stem = media_file.stem
+        is_vid = media_file.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v"}
+        temp_cleanup_files = []
+
+        item_result = {
+            "index": i,
+            "filename": f_name,
+            "original_path": str(media_file.resolve()),
+            "status": "pending",
+            "source_srt": None,
+            "khmer_srt": None,
+            "dubbed_audio": None,
+            "output_video": None,
+            "error": None,
+        }
+
+        def report(step_text: str):
+            if progress_callback:
+                try:
+                    progress_callback(i, total_files, f"[{i}/{total_files}] {f_name}: {step_text}", item_result)
+                except Exception:
+                    pass
+
+        try:
+            # 1. Transcribe speech to text
+            report("🎙️ Step 1/4: Transcribing speech to timestamped subtitles...")
+            t_key = openai_key if model_name.startswith("openai") else (gemini_key if model_name.startswith("gemini") else "")
+            source_srt_content = transcribe_media(media_file, model_name=model_name, api_key=t_key)
+            src_subs = parse_srt(source_srt_content)
+            if not src_subs:
+                raise ValueError("No speech segments detected in media.")
+
+            if not save_only_video:
+                src_srt_path = out_dir / f"{f_stem}_source.srt"
+                src_srt_path.write_text(source_srt_content, encoding="utf-8")
+                item_result["source_srt"] = str(src_srt_path.resolve())
+
+            # 2. Translate subtitles to Khmer
+            report(f"🌐 Step 2/4: Translating {len(src_subs)} subtitles into natural Khmer...")
+            khmer_subs = run_auto_translation(
+                src_subs,
+                source_language=source_language,
+                gemini_key=gemini_key,
+                openai_key=openai_key,
+                model_name=model_name,
+            )
+            khmer_srt_content = render_srt(khmer_subs)
+
+            if not save_only_video:
+                khmer_srt_path = out_dir / f"{f_stem}_khmer.srt"
+                khmer_srt_path.write_text(khmer_srt_content, encoding="utf-8")
+                item_result["khmer_srt"] = str(khmer_srt_path.resolve())
+            else:
+                khmer_srt_path = temp_work_dir / f"tmp_{f_stem}_{secrets.token_hex(4)}_khmer.srt"
+                khmer_srt_path.write_text(khmer_srt_content, encoding="utf-8")
+                temp_cleanup_files.append(khmer_srt_path)
+
+            # 3. Voice-Over Synthesis in Khmer
+            report(f"🔊 Step 3/4: Generating Khmer Voice-Over ({voice})...")
+            subtitle_voices = {}
+            if voice == "auto_detect":
+                try:
+                    seg_voices = classify_all_segments_piseth_sreymom(khmer_subs, media_path=str(media_file.resolve()))
+                    if seg_voices:
+                        subtitle_voices = {idx: v["voice"] for idx, v in seg_voices.items()}
+                except Exception:
+                    subtitle_voices = {}
+
+            if not save_only_video or not is_vid:
+                dubbed_audio_path = out_dir / (f"{f_stem}_dubbed.mp3" if not is_vid else f"{f_stem}_dubbed_audio.wav")
+            else:
+                dubbed_audio_path = temp_work_dir / f"tmp_{f_stem}_{secrets.token_hex(4)}_audio.wav"
+                temp_cleanup_files.append(dubbed_audio_path)
+
+            synthesize_full_audio(
+                subtitles=khmer_subs,
+                engine=tts_engine,
+                voice=voice,
+                speed=voice_speed,
+                elevenlabs_key=elevenlabs_key,
+                media_path=str(media_file.resolve()),
+                output_audio_path=str(dubbed_audio_path.resolve()),
+                subtitle_voices_override=subtitle_voices,
+            )
+            if not save_only_video or not is_vid:
+                item_result["dubbed_audio"] = str(dubbed_audio_path.resolve())
+
+            # 4. Auto Render Dubbed Video
+            if is_vid:
+                report("🎬 Step 4/4: Auto-rendering dubbed video with FFmpeg...")
+                rendered_video_path = out_dir / f"{f_stem}_dubbed.mp4"
+                process_video_dubbing(
+                    video_path=str(media_file.resolve()),
+                    audio_path=str(dubbed_audio_path.resolve()),
+                    srt_path=str(khmer_srt_path.resolve()) if burn_subtitles else None,
+                    dub_volume=dub_volume,
+                    burn_subtitles=burn_subtitles,
+                    enable_bg_music=enable_bg_music,
+                    bg_music_vol=bg_music_vol,
+                    enable_orig_voice=enable_orig_voice,
+                    orig_voice_vol=orig_voice_vol,
+                    output_video_path=str(rendered_video_path.resolve()),
+                )
+                item_result["output_video"] = str(rendered_video_path.resolve())
+            else:
+                item_result["output_video"] = str(dubbed_audio_path.resolve())
+
+            # Clean up temporary intermediate files (SRT and Audio)
+            for tmp_f in temp_cleanup_files:
+                try:
+                    if tmp_f.exists():
+                        tmp_f.unlink()
+                except Exception:
+                    pass
+
+            item_result["status"] = "success"
+            report("✅ Complete!")
+
+        except Exception as exc:
+            # Clean up temporary intermediate files on error as well
+            for tmp_f in temp_cleanup_files:
+                try:
+                    if tmp_f.exists():
+                        tmp_f.unlink()
+                except Exception:
+                    pass
+            item_result["status"] = "error"
+            item_result["error"] = str(exc)
+            report(f"❌ Error: {exc}")
+
+        results.append(item_result)
+
+    succeeded = sum(1 for r in results if r["status"] == "success")
+    failed = sum(1 for r in results if r["status"] == "error")
+
+    return {
+        "total_files": total_files,
+        "succeeded": succeeded,
+        "failed": failed,
+        "output_folder": str(out_dir.resolve()),
+        "results": results,
+    }
+
+
+# Function alias for exact user prompt naming
+transrcibe_one_folder = transcribe_one_folder
 
 
 # ==========================================
@@ -1932,6 +2204,10 @@ if "t1_voice_pills" in st.session_state and st.session_state.t1_voice_pills not 
     del st.session_state["t1_voice_pills"]
 if "voice_gender_counts" not in st.session_state:
     st.session_state.voice_gender_counts = {"male": 0, "female": 0}
+if "batch_dub_results" not in st.session_state:
+    st.session_state.batch_dub_results = None
+if "batch_folder_path" not in st.session_state:
+    st.session_state.batch_folder_path = ""
 
 # Auto-classify segment voices if SRT and media are present but voices not yet loaded
 if not st.session_state.subtitle_voices and st.session_state.khmer_srt and st.session_state.uploaded_media_path and Path(st.session_state.uploaded_media_path).exists():
@@ -2253,20 +2529,22 @@ pending_dict = saved_config.get("pending_users", {})
 num_pending = len(pending_dict)
 
 if is_admin_user:
-    cust_tab_title = f"05 👥 Customers ({num_pending})" if num_pending > 0 else "05 👥 Customers"
-    tab_transcribe, tab_translate, tab_editor_voice, tab_video, tab_customers = st.tabs([
+    cust_tab_title = f"06 👥 Customers ({num_pending})" if num_pending > 0 else "06 👥 Customers"
+    tab_transcribe, tab_batch_folder, tab_translate, tab_editor_voice, tab_video, tab_customers = st.tabs([
         "01 🎙️ Transcribe",
-        "02 🌐 Translate",
-        "03 ✏️ Voice & Edit",
-        "04 🎬 Video Studio",
+        "02 📁 Folder Auto-Dub",
+        "03 🌐 Translate",
+        "04 ✏️ Voice & Edit",
+        "05 🎬 Video Studio",
         cust_tab_title,
     ])
 else:
-    tab_transcribe, tab_translate, tab_editor_voice, tab_video = st.tabs([
+    tab_transcribe, tab_batch_folder, tab_translate, tab_editor_voice, tab_video = st.tabs([
         "01 🎙️ Transcribe",
-        "02 🌐 Translate",
-        "03 ✏️ Voice & Edit",
-        "04 🎬 Video Studio",
+        "02 📁 Folder Auto-Dub",
+        "03 🌐 Translate",
+        "04 ✏️ Voice & Edit",
+        "05 🎬 Video Studio",
     ])
     tab_customers = None
 
@@ -2704,7 +2982,245 @@ with tab_transcribe:
             st.info("Uploaded subtitles and segments will appear here after transcription.")
 
 # ----------------------------------------------------
-# TAB 02: Khmer Translation
+# TAB 02: Folder Batch Auto-Dubbing
+# ----------------------------------------------------
+with tab_batch_folder:
+    st.markdown(
+        """
+        <div class="tab-header">
+            <h3>Step 1B: Transcribe One Folder (All-in-One Auto Pipeline)</h3>
+            <p style="color: #94a3b8; margin: 0;">
+                ដំណើរការស្វ័យប្រវត្តិកម្មផលិតវិដេអូជាបាច់ក្នុង 1 ថត៖ <b>ចម្លងសម្លេង (Transcribe)</b> ➔ <b>បកប្រែភាសាខ្មែរ (Khmer)</b> ➔ <b>បញ្ចូលសម្លេង (Voice-Over)</b> ➔ <b>Auto Render វិដេអូ (.MP4)</b> ស្រេចដោយស្វ័យប្រវត្ត។
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    batch_col1, batch_col2 = st.columns([1.1, 1], gap="medium")
+
+    with batch_col1:
+        st.markdown("#### 📂 1. ជ្រើសរើសប្រភពឯកសារ (Select Media Source)")
+        source_mode = st.radio(
+            "Source Mode",
+            ["📁 Local Folder Path (Computer)", "📤 Multi-File Upload (Phone / Browser)"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        folder_media_files = []
+        target_folder_path = ""
+
+        if source_mode == "📁 Local Folder Path (Computer)":
+            def_path = st.session_state.get("batch_folder_path") or str(Path.cwd().resolve())
+            target_folder_path = st.text_input(
+                "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
+                value=def_path,
+                help="Enter the full path to the folder containing your videos or audio files (e.g., D:/Videos or C:/Users/.../Videos)",
+            )
+            st.session_state.batch_folder_path = target_folder_path
+
+            if target_folder_path:
+                p_in = Path(target_folder_path)
+                if p_in.exists() and p_in.is_dir():
+                    valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
+                    folder_media_files = sorted([f for f in p_in.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+                    vid_count = sum(1 for f in folder_media_files if f.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v"})
+                    aud_count = len(folder_media_files) - vid_count
+
+                    st.markdown(
+                        f"""
+                        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px; padding: 9px 12px; margin: 4px 0 10px 0;">
+                            <span style="color: #34d399; font-weight: 700; font-size: 0.9rem;">✓ បានរកឃើញឯកសារសរុប {len(folder_media_files)} files:</span>
+                            <span style="color: #94a3b8; font-size: 0.8rem; margin-left: 6px;">({vid_count} វិដេអូ / {aud_count} សម្លេង)</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.warning("⚠️ Folder មិនទាន់មាន ឬរកមិនឃើញទេ។ សូមពិនិត្យមើលផ្លូវ folder ឡើងវិញ។")
+        else:
+            uploaded_batch_files = st.file_uploader(
+                "ជ្រើសរើសឯកសារជាច្រើនពីទូរស័ព្ទ ឬកុំព្យូទ័រ (Select Multiple Media Files):",
+                type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
+                accept_multiple_files=True,
+                help="Support batch upload from phone gallery or files",
+            )
+            if uploaded_batch_files:
+                batch_upload_dir = get_user_storage_dir() / "batch_uploaded_input"
+                batch_upload_dir.mkdir(parents=True, exist_ok=True)
+                folder_media_files = []
+                for up_f in uploaded_batch_files:
+                    up_p = batch_upload_dir / up_f.name
+                    up_p.write_bytes(up_f.getvalue())
+                    folder_media_files.append(up_p)
+                st.success(f"✓ បានបញ្ចូល {len(folder_media_files)} ឯកសាររួចរាល់សម្រាប់ដំណើរការ!")
+                target_folder_path = str(batch_upload_dir.resolve())
+
+        # Output folder path
+        def_out = str((Path(target_folder_path) / "dubbed_outputs").resolve()) if target_folder_path else str((get_user_storage_dir() / "batch_outputs").resolve())
+        batch_out_path = st.text_input(
+            "💾 ថតរក្សាទុកលទ្ធផល (Output Folder):",
+            value=def_out,
+            help="Rendered videos (.MP4), Khmer subtitles (.SRT), and dubbed audio (.WAV) will be saved here.",
+        )
+
+        st.markdown("#### ⚙️ 2. កំណត់សំឡេង និងការ Mix (Pipeline Settings)")
+        
+        b_c1, b_c2 = st.columns(2)
+        with b_c1:
+            batch_voice_opt = st.selectbox(
+                "🎙️ Khmer Voice Mode",
+                [
+                    "🎭 និយាយប្រុសផងស្រីផងស្វ័យប្រវត្ត (Piseth 👨 + Sreymom 👩)",
+                    "👨 Piseth Neural (សម្លេងប្រុស)",
+                    "👩 Sreymom Neural (សម្លេងស្រី)",
+                ],
+                help="Auto-detect dynamically switches between Piseth and Sreymom based on character voice pitch.",
+            )
+            if "Piseth" in batch_voice_opt and "Sreymom" in batch_voice_opt:
+                chosen_batch_voice = "auto_detect"
+            elif "Piseth" in batch_voice_opt:
+                chosen_batch_voice = "km-KH-PisethNeural"
+            else:
+                chosen_batch_voice = "km-KH-SreymomNeural"
+
+        with b_c2:
+            batch_speed = st.slider("⚡ ល្បឿនសម្លេង (Voice Speed)", 0.75, 1.40, 1.0, 0.05, format="%.2fx")
+
+        col_bm_m, col_bm_v = st.columns(2)
+        with col_bm_m:
+            batch_bg_music = st.toggle("🎵 Background Music", value=st.session_state.get("enable_bg_music", False), key="batch_bg_music")
+            if batch_bg_music:
+                batch_bg_vol = st.slider("Music Vol", 5, 80, int(st.session_state.get("bg_music_vol", 20)), format="%d%%", key="batch_bg_vol")
+            else:
+                batch_bg_vol = 0
+        with col_bm_v:
+            batch_orig_voice = st.toggle("🗣️ Original Voice", value=st.session_state.get("enable_orig_voice", False), key="batch_orig_voice")
+            if batch_orig_voice:
+                batch_orig_vol = st.slider("Orig Vol", 5, 50, int(st.session_state.get("orig_voice_vol", 15)), format="%d%%", key="batch_orig_vol")
+            else:
+                batch_orig_vol = 0
+
+        col_bd_v, col_bd_s = st.columns([1.2, 1])
+        with col_bd_v:
+            batch_dub_vol = st.slider("🎙️ Dubbed Voice Vol", 50, 150, 100, 5, format="%d%%", key="batch_dub_vol")
+        with col_bd_s:
+            batch_burn_subs = st.checkbox("Burn Subtitles on Video", value=False, key="batch_burn_subs", help="Hardcode Khmer subtitles onto video frame.")
+
+        batch_save_only_video = st.checkbox(
+            "💾 រក្សាទុកតែវិដេអូស្រេច (Save ONLY Finished Video - No SRT/MP3)",
+            value=True,
+            key="batch_save_only_video",
+            help="រក្សាទុកតែវិដេអូដែលបានបញ្ចូលសម្លេងរួច (.MP4) ក្នុង Folder លទ្ធផល ដោយមិនរក្សាទុកឯកសារ SRT និង MP3 នោះទេ។",
+        )
+
+        start_batch_btn = st.button("🚀 Start Folder Dubbing (Transcribe ➔ Translate ➔ Voice-Over ➔ Render)", type="primary", use_container_width=True)
+
+    with batch_col2:
+        st.markdown("#### 📋 3. បញ្ជីឯកសារ និងវឌ្ឍនភាព (Progress & Results)")
+
+        if folder_media_files:
+            with st.expander(f"📁 បញ្ជីឯកសារក្នុង Folder ({len(folder_media_files)} files)", expanded=not bool(st.session_state.batch_dub_results)):
+                for idx, mf in enumerate(folder_media_files, 1):
+                    sz_mb = mf.stat().st_size / (1024 * 1024)
+                    ext_icon = "🎬" if mf.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v"} else "🎧"
+                    st.markdown(f"**{idx}.** {ext_icon} `{mf.name}` *({sz_mb:.1f} MB)*")
+
+        if start_batch_btn:
+            if not folder_media_files:
+                st.error("⚠️ មិនមានឯកសារវីដេអូ ឬសម្លេងក្នុង Folder នេះទេ។ សូមពិនិត្យ Folder ម្តងទៀត។")
+            else:
+                st.info(f"🚀 កំពុងចាប់ផ្តើមដំណើរការ {len(folder_media_files)} ឯកសារក្នុងពេលតែមួយ...")
+                progress_bar = st.progress(0.0)
+                status_text = st.empty()
+                log_box = st.empty()
+                logs = []
+
+                def batch_progress_ui(cur_idx, total_cnt, step_msg, item_res=None):
+                    frac = max(0.0, min(1.0, (cur_idx - 1) / total_cnt))
+                    progress_bar.progress(frac)
+                    status_text.markdown(f"**{step_msg}**")
+                    logs.append(f"[{time.strftime('%H:%M:%S')}] {step_msg}")
+                    log_box.code("\n".join(logs[-10:]), language="bash")
+
+                try:
+                    res_summary = transcribe_one_folder(
+                        folder_path=target_folder_path if source_mode == "📁 Local Folder Path (Computer)" else None,
+                        output_folder=batch_out_path,
+                        model_name=pipeline_model,
+                        source_language=source_language,
+                        gemini_key=gemini_key,
+                        openai_key=openai_key,
+                        elevenlabs_key=eleven_key,
+                        tts_engine=tts_engine,
+                        voice=chosen_batch_voice,
+                        voice_speed=batch_speed,
+                        burn_subtitles=batch_burn_subs,
+                        enable_bg_music=batch_bg_music,
+                        bg_music_vol=batch_bg_vol,
+                        enable_orig_voice=batch_orig_voice,
+                        orig_voice_vol=batch_orig_vol,
+                        dub_volume=batch_dub_vol,
+                        progress_callback=batch_progress_ui,
+                        file_list=folder_media_files if source_mode != "📁 Local Folder Path (Computer)" else None,
+                        save_only_video=batch_save_only_video,
+                    )
+                    progress_bar.progress(1.0)
+                    status_text.success(f"🎉 ដំណើរការ Folder បានបញ្ចប់ជោគជ័យ! ({res_summary['succeeded']}/{res_summary['total_files']} files)")
+                    st.session_state.batch_dub_results = res_summary
+                except Exception as b_err:
+                    st.error(f"❌ កំហុសក្នុងដំណើរការ Batch: {b_err}")
+
+        # Render Batch Results if available
+        if st.session_state.get("batch_dub_results"):
+            b_res = st.session_state.batch_dub_results
+            st.markdown("---")
+            st.markdown(
+                f"""
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 12px; padding: 12px 16px; margin: 10px 0 16px 0;">
+                    <div style="font-size: 1.05rem; font-weight: 700; color: #34d399; margin-bottom: 4px;">🎉 លទ្ធផលផលិតវិដេអូជាបាច់ (Batch Completed)</div>
+                    <div style="font-size: 0.85rem; color: #cbd5e1;">
+                        ជោគជ័យ: <b>{b_res.get('succeeded', 0)}</b> / {b_res.get('total_files', 0)} ឯកសារ • ថតរក្សាទុក: <code>{escape(b_res.get('output_folder', ''))}</code>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            for item in b_res.get("results", []):
+                item_stat = "✅" if item.get("status") == "success" else "❌"
+                with st.expander(f"{item_stat} **{item.get('filename')}**", expanded=(item.get("status") == "success")):
+                    if item.get("status") == "success":
+                        out_v = item.get("output_video")
+                        if out_v and Path(out_v).exists() and Path(out_v).suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}:
+                            render_video_preview(out_v)
+                            with open(out_v, "rb") as vf_b:
+                                v_bytes = vf_b.read()
+                            st.download_button(
+                                f"📥 Download Dubbed Video ({Path(out_v).name})",
+                                data=v_bytes,
+                                file_name=Path(out_v).name,
+                                mime="video/mp4",
+                                key=f"dl_b_vid_{item['index']}",
+                                use_container_width=True,
+                            )
+                        elif out_v and Path(out_v).exists():
+                            with open(out_v, "rb") as af_b:
+                                a_bytes = af_b.read()
+                            st.download_button(
+                                f"📥 Download Media ({Path(out_v).name})",
+                                data=a_bytes,
+                                file_name=Path(out_v).name,
+                                mime="audio/wav",
+                                key=f"dl_b_aud_{item['index']}",
+                                use_container_width=True,
+                            )
+                    else:
+                        st.error(f"បរាជ័យ: {item.get('error')}")
+
+# ----------------------------------------------------
+# TAB 03: Khmer Translation
 # ----------------------------------------------------
 with tab_translate:
     st.markdown(
