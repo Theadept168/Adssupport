@@ -235,6 +235,10 @@ def main():
         "true",
     ]
 
+    st_env = os.environ.copy()
+    st_env["PYTHONUTF8"] = "1"
+    st_env["PYTHONIOENCODING"] = "utf-8"
+
     try:
         streamlit_proc = subprocess.Popen(
             st_cmd,
@@ -244,6 +248,7 @@ def main():
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=st_env,
         )
     except Exception as e:
         print(f"{C_RED}[!] Failed to launch Streamlit: {e}{C_RESET}")

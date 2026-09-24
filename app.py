@@ -17,6 +17,9 @@ import requests
 import streamlit as st
 from pydub import AudioSegment
 
+os.environ["PYTHONUTF8"] = "1"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
 # ==========================================
 # Application Configuration & Initial Setup
 # ==========================================
@@ -941,6 +944,13 @@ def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: 
 
 
 def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini_key: str, openai_key: str, model_name: str) -> list[Subtitle]:
+    if not gemini_key or not openai_key:
+        _cfg = load_saved_config()
+        if not gemini_key:
+            gemini_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+        if not openai_key:
+            openai_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+
     g_model = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-flash-latest"
     try:
         if gemini_key:
@@ -1027,6 +1037,13 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
                 upload_file_path = audio_extract_path
         except Exception:
             upload_file_path = media_path
+
+    if not api_key:
+        _cfg = load_saved_config()
+        if model_name.startswith("openai"):
+            api_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+        elif model_name.startswith("gemini"):
+            api_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
 
     if model_name == "openai-gpt-4o-mini-transcribe":
         return transcribe_with_openai(upload_file_path, api_key)
@@ -1363,7 +1380,7 @@ def synthesize_full_audio(
 # ==========================================
 def video_has_audio(video_file: str) -> bool:
     try:
-        res = subprocess.run([FFMPEG_BIN, "-i", video_file], capture_output=True, text=True)
+        res = subprocess.run([FFMPEG_BIN, "-i", video_file], capture_output=True, text=True, encoding="utf-8", errors="replace")
         return "Audio:" in res.stderr
     except Exception:
         return True
@@ -1513,7 +1530,7 @@ def process_video_dubbing(
         str(out_video_path.resolve()),
     ])
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg error:\n{proc.stderr}")
 
@@ -1534,21 +1551,6 @@ def render_video_preview(video_path: str):
         st.video(v_data, format="video/mp4")
     except Exception:
         st.video(str(p.resolve()), format="video/mp4")
-
-
-def pick_folder_dialog(initial_dir: str = None) -> str:
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        init = initial_dir if initial_dir and Path(initial_dir).is_dir() else str(Path.home())
-        selected = filedialog.askdirectory(initialdir=init, title="ជ្រើសរើស Folder វីដេអូ (Select Video Folder)")
-        root.destroy()
-        return selected or ""
-    except Exception:
-        return ""
 
 
 def transcribe_one_folder(
@@ -1648,8 +1650,10 @@ def transcribe_one_folder(
 
         try:
             # 1. Transcribe speech to text
-            report("🎙️ Step 1/4: Transcribing speech to timestamped subtitles...")
             t_key = openai_key if model_name.startswith("openai") else (gemini_key if model_name.startswith("gemini") else "")
+            if not t_key:
+                _cfg = load_saved_config()
+                t_key = _cfg.get("openai_api_key" if model_name.startswith("openai") else "gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
             source_srt_content = transcribe_media(media_file, model_name=model_name, api_key=t_key)
             src_subs = parse_srt(source_srt_content)
             if not src_subs:
@@ -2423,52 +2427,7 @@ margin-bottom: 1.2rem; text-align: center;">
                             st.error("❌ Invalid username or password. If you don't have an account, click 'Create Account' above.")
 
                         if _valid_login:
-                            # Strict single-device check
-                            u_info = auth_users.get(login_username, {}) if isinstance(auth_users.get(login_username), dict) else {}
-                            live_tok = u_info.get("active_session_token", "")
-                            live_dev = u_info.get("active_device_name", "") or "ឧបករណ៍មួយផ្សេងទៀត"
-                            client_dev = get_client_device_info().get("device_name", "")
-
-                            # If another device is actively using this account:
-                            if live_tok and live_dev and live_dev != client_dev and live_tok != st.session_state.get("session_token", ""):
-                                st.session_state["takeover_user"] = login_username
-                                st.session_state["takeover_save"] = save_device
-                                st.session_state["takeover_active_dev"] = live_dev
-                            else:
-                                complete_user_login(login_username, save_device)
-
-            if st.session_state.get("takeover_user"):
-                t_user = st.session_state.get("takeover_user")
-                t_save = st.session_state.get("takeover_save", True)
-                t_dev = st.session_state.get("takeover_active_dev", "ឧបករណ៍ផ្សេងទៀត")
-                st.markdown(
-                    f"""
-                    <div style="background: rgba(239, 68, 68, 0.12); border: 1.5px solid rgba(239, 68, 68, 0.5); border-radius: 14px; padding: 14px 16px; margin: 12px 0;">
-                        <div style="font-weight: 700; color: #f87171; font-size: 0.96rem; margin-bottom: 5px;">
-                            ⚠️ គណនីកំពុងមានអ្នកប្រើប្រាស់នៅលើឧបករណ៍ផ្សេង! (Account Already In Use)
-                        </div>
-                        <div style="font-size: 0.85rem; color: #fca5a5; line-height: 1.6;">
-                            គណនី <b>{t_user}</b> កំពុងបើកដំណើរការនៅលើ <b>{t_dev}</b>។<br>
-                            🔒 <b>មួយគណនីអាចប្រើប្រាស់បានតែ ១ ឧបករណ៍ប៉ុណ្ណោះ</b> មិនអាចប្រើដំណាលគ្នាបានទេ។<br>
-                            ប្រសិនបើអ្នកជាម្ចាស់គណនីពិតប្រាកដ ហើយចង់ប្តូរមកប្រើលើឧបករណ៍នេះ សូមចុចប៊ូតុងខាងក្រោមដើម្បីកាត់ផ្តាច់ឧបករណ៍ចាស់៖
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                col_t1, col_t2 = st.columns([1.5, 1])
-                with col_t1:
-                    if st.button("🚪 ផ្តាច់ឧបករណ៍ចាស់ ហើយចូលប្រើនៅទីនេះ", type="primary", use_container_width=True, key="btn_confirm_takeover"):
-                        st.session_state.pop("takeover_user", None)
-                        st.session_state.pop("takeover_save", None)
-                        st.session_state.pop("takeover_active_dev", None)
-                        complete_user_login(t_user, t_save)
-                with col_t2:
-                    if st.button("❌ Cancel", use_container_width=True, key="btn_cancel_takeover"):
-                        st.session_state.pop("takeover_user", None)
-                        st.session_state.pop("takeover_save", None)
-                        st.session_state.pop("takeover_active_dev", None)
-                        st.rerun()
+                            complete_user_login(login_username, save_device)
 
         with tab_signup:
             with st.form(key="dubber_signup_form"):
@@ -3456,16 +3415,7 @@ with tab_batch_folder:
     batch_col1, batch_col2 = st.columns([1.1, 1], gap="medium")
 
     with batch_col1:
-        st.markdown("#### 📂 1. ជ្រើសរើសវីដេអូសម្រាប់ Dubbing (Select Media)")
-
-        tab_mode_upload, tab_mode_pc = st.tabs([
-            "📤 ជ្រើសរើសឯកសារ ឬទម្លាក់វីដេអូ (Upload / Drag & Drop) ★ ងាយបំផុត",
-            "💻 ជ្រើសរើស Folder លើកុំព្យូទ័រ (Local Computer Folder)",
-        ])
-
-        folder_media_files = []
-        target_folder_path = ""
-        source_mode = "upload"
+        st.markdown("#### 📂 1. ជ្រើសរើសវីដេអូសម្រាប់ Dubbing (Select Videos)")
 
         curr_auth_u = st.session_state.get("auth_user", "guest")
         user_storage = get_user_storage_dir(curr_auth_u)
@@ -3474,119 +3424,145 @@ with tab_batch_folder:
         user_batch_in.mkdir(parents=True, exist_ok=True)
         user_batch_out.mkdir(parents=True, exist_ok=True)
 
-        with tab_mode_upload:
+        if "batch_media_files" not in st.session_state:
+            st.session_state.batch_media_files = []
+
+        valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
+
+        batch_input_mode = st.radio(
+            "ជ្រើសរើសវិធីសាស្ត្របញ្ចូលវីដេអូ (Input Method):",
+            [
+                "📤 បញ្ចូលវីដេអូផ្ទាល់ (Upload Videos - Phone & PC)",
+                "📁 ជ្រើសរើស Folder លើកុំព្យូទ័រ (Local Folder on PC)",
+            ],
+            horizontal=True,
+            key="batch_input_mode_selector",
+        )
+
+        if "Upload Videos" in batch_input_mode:
+            st.markdown("<p style='font-size:0.83rem; color:#94a3b8;'>ជ្រើសរើសវីដេអូ 1 ឬច្រើនពីទូរស័ព្ទ (Phone Gallery) ឬកុំព្យូទ័ររបស់អ្នក៖</p>", unsafe_allow_html=True)
+            up_batch = st.file_uploader(
+                "ជ្រើសរើសវីដេអូ (Select 1 or more videos):",
+                type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
+                accept_multiple_files=True,
+                key="batch_file_uploader_widget",
+                help="អាចចុចជ្រើសរើសវីដេអូច្រើនពី Phone Gallery ឬ Computer",
+            )
+            if up_batch:
+                saved_files = []
+                for uf in up_batch:
+                    dest = user_batch_in / uf.name
+                    dest.write_bytes(uf.getvalue())
+                    saved_files.append(dest)
+                st.session_state.batch_media_files = saved_files
+                st.success(f"✓ បានបញ្ចូល {len(saved_files)} វីដេអូរួចរាល់!")
+
+            existing_in = sorted([f for f in user_batch_in.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+            if existing_in:
+                col_ex1, col_ex2 = st.columns([1.5, 1])
+                with col_ex1:
+                    st.caption(f"📁 វីដេអូដែលមានស្រាប់ក្នុង Folder ផ្ទុក: **{len(existing_in)} files**")
+                with col_ex2:
+                    if st.button("🗑️ សម្អាតចោល (Clear Uploads)", key="btn_clear_uploads", use_container_width=True):
+                        for f in existing_in:
+                            try:
+                                f.unlink()
+                            except Exception:
+                                pass
+                        st.session_state.batch_media_files = []
+                        st.rerun()
+
+                if not st.session_state.get("batch_media_files"):
+                    st.session_state.batch_media_files = existing_in
+
+        else:
+            user_session_folder_key = f"batch_folder_path_{curr_auth_u}"
+            def_pc_path = st.session_state.get(user_session_folder_key) or str(user_batch_in.resolve())
+
+            # Preset Folder Shortcuts
+            st.markdown("<p style='font-size:0.83rem; color:#94a3b8;'>ចុចប៊ូតុងកាត់ ឬវាយបញ្ចូល Folder លើកុំព្យូទ័រ៖</p>", unsafe_allow_html=True)
+            sc_cols = st.columns(4)
+            with sc_cols[0]:
+                vid_dir = Path.home() / "Videos"
+                if vid_dir.exists() and st.button("🎥 Videos", key="btn_q_vid", use_container_width=True):
+                    st.session_state[user_session_folder_key] = str(vid_dir.resolve())
+                    st.session_state.batch_target_folder = str(vid_dir.resolve())
+                    st.rerun()
+            with sc_cols[1]:
+                down_dir = Path.home() / "Downloads"
+                if down_dir.exists() and st.button("📥 Downloads", key="btn_q_down", use_container_width=True):
+                    st.session_state[user_session_folder_key] = str(down_dir.resolve())
+                    st.session_state.batch_target_folder = str(down_dir.resolve())
+                    st.rerun()
+            with sc_cols[2]:
+                desk_dir = Path.home() / "Desktop"
+                if desk_dir.exists() and st.button("🖥️ Desktop", key="btn_q_desk", use_container_width=True):
+                    st.session_state[user_session_folder_key] = str(desk_dir.resolve())
+                    st.session_state.batch_target_folder = str(desk_dir.resolve())
+                    st.rerun()
+            with sc_cols[3]:
+                d_drive = Path("D:/")
+                if d_drive.exists() and st.button("💾 D: Drive", key="btn_q_d_drive", use_container_width=True):
+                    st.session_state[user_session_folder_key] = "D:/"
+                    st.session_state.batch_target_folder = "D:/"
+                    st.rerun()
+
+            pc_path_input = st.text_input(
+                "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
+                value=def_pc_path,
+                key="pc_path_txt_in",
+                help="បញ្ចូលផ្លូវ Folder ដូចជា D:/Videos ឬ C:/Users/.../Videos",
+            )
+            clean_p = pc_path_input.strip().strip('"').strip("'") if pc_path_input else ""
+            st.session_state[user_session_folder_key] = clean_p
+
+            if clean_p:
+                p_obj = Path(clean_p)
+                if p_obj.exists() and p_obj.is_dir():
+                    found_p_files = sorted([f for f in p_obj.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+                    st.session_state.batch_media_files = found_p_files
+                    st.session_state.batch_target_folder = clean_p
+                    if found_p_files:
+                        st.success(f"✓ បានស្កេនឃើញ {len(found_p_files)} វីដេអូក្នុង Folder `{p_obj.name or clean_p}` ស្រេចសម្រាប់ Dubbing!")
+                    else:
+                        st.info(f"📂 Folder `{p_obj.name or clean_p}` ត្រឹមត្រូវ ប៉ុន្តែមិនទាន់មានឯកសារវីដេអូ (.mp4, .mov, .mkv, ...) ទេ។")
+                else:
+                    st.warning(f"⚠️ រកមិនឃើញ Folder: `{clean_p}`")
+                    if st.button("➕ បង្កើត Folder នេះឥឡូវនេះ (Create Folder)", key="btn_make_dir"):
+                        try:
+                            p_obj.mkdir(parents=True, exist_ok=True)
+                            st.success("✓ បានបង្កើត Folder រួចរាល់!")
+                            st.session_state.batch_target_folder = clean_p
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+        # Active selected files
+        active_files = [Path(p) for p in st.session_state.get("batch_media_files", []) if Path(p).exists()]
+        if active_files:
             st.markdown(
-                """
-                <div style="background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px;">
-                    <div style="font-weight: 700; color: #38bdf8; font-size: 0.9rem;">✨ វិធីងាយស្រួលបំផុតសម្រាប់គ្រប់ឧបករណ៍ (ទូរស័ព្ទដៃ & កុំព្យូទ័រ)</div>
-                    <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 2px;">
-                        ចុចជ្រើសរើសវីដេអូជាច្រើន (5, 10, 20 files) ឬទម្លាក់ Folder ទាំងមូលចូលក្នុងប្រអប់ខាងក្រោម៖
+                f"""
+                <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; padding: 10px 14px; margin: 10px 0;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="color: #34d399; font-weight: 700; font-size: 0.92rem;">✓ បានជ្រើសរើស {len(active_files)} វីដេអូសម្រាប់ Dubbing</span>
+                        <span style="font-size: 0.75rem; color: #a7f3d0; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 999px;">Ready</span>
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            uploaded_batch_files = st.file_uploader(
-                "ជ្រើសរើសវីដេអូច្រើនក្នុងពេលតែមួយ (Select Multiple Videos):",
-                type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
-                accept_multiple_files=True,
-                help="គាំទ្រការជ្រើសរើសវីដេអូ ឬទម្លាក់ចូលជាបាច់ពី Gallery ទូរស័ព្ទ ឬ Computer",
-                key="tab_batch_multi_uploader",
-            )
-            if uploaded_batch_files:
-                source_mode = "upload"
-                for up_f in uploaded_batch_files:
-                    up_p = user_batch_in / up_f.name
-                    up_p.write_bytes(up_f.getvalue())
-                    folder_media_files.append(up_p)
-                st.success(f"✓ បានបញ្ចូល {len(folder_media_files)} វីដេអូរួចរាល់! អាចកំណត់សំឡេង និងចុច Start ខាងក្រោមបានភ្លាម។")
-                target_folder_path = str(user_batch_in.resolve())
-            else:
-                existing_in_files = sorted([f for f in user_batch_in.iterdir() if f.is_file() and f.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a"}])
-                if existing_in_files and not uploaded_batch_files:
-                    st.caption(f"💡 មាន {len(existing_in_files)} ឯកសារដែលធ្លាប់បានបញ្ចូលពីមុនក្នុង Folder របស់អ្នក។")
-                    if st.button(f"🔄 ប្រើប្រាស់ {len(existing_in_files)} វីដេអូដែលធ្លាប់បញ្ចូលពីមុន (Use Previous Files)", key="btn_use_prev_batch"):
-                        folder_media_files = existing_in_files
-                        target_folder_path = str(user_batch_in.resolve())
-                        source_mode = "upload"
 
-        with tab_mode_pc:
-            st.caption("ប្រើសម្រាប់ជ្រើសរើស Folder ដែលមានស្រាប់លើកុំព្យូទ័រ (PC) ដោយមិនបាច់ Upload ឡើងវិញ។")
-            user_session_folder_key = f"batch_folder_path_{curr_auth_u}"
-            saved_f = st.session_state.get(user_session_folder_key, "")
-            if saved_f and Path(saved_f.strip().strip('"').strip("'")).is_dir():
-                def_pc_path = saved_f.strip().strip('"').strip("'")
-            else:
-                def_pc_path = str(user_batch_in.resolve())
+        # Smart Output folder path: inside the selected folder / dubbed_outputs or user_batch_out
+        target_f = st.session_state.get("batch_target_folder", "")
+        if target_f and Path(target_f).exists() and Path(target_f).is_dir() and Path(target_f) != Path.cwd():
+            def_out = str((Path(target_f) / "dubbed_outputs").resolve())
+        else:
+            def_out = str(user_batch_out.resolve())
 
-            # Big Browse Folder button that opens native Windows Explorer folder dialog
-            c_browse, c_reset = st.columns([1.5, 1])
-            with c_browse:
-                if st.button("📂 ចុចបើកជ្រើសរើស Folder លើ PC (Browse Folder)", key="btn_open_win_folder_dialog", type="primary", use_container_width=True):
-                    picked = pick_folder_dialog(def_pc_path)
-                    if picked:
-                        st.session_state[user_session_folder_key] = picked
-                        st.rerun()
-            with c_reset:
-                if st.button("🔄 ត្រឡប់ទៅ Folder ដើម", key="btn_pc_reset_default", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
-                    st.rerun()
-
-            # Preset shortcuts
-            pc_shortcuts = st.columns(3)
-            with pc_shortcuts[0]:
-                vid_folder = Path.home() / "Videos"
-                if vid_folder.exists() and st.button("🎥 Videos Folder", key="btn_sc_videos", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(vid_folder.resolve())
-                    st.rerun()
-            with pc_shortcuts[1]:
-                down_folder = Path.home() / "Downloads"
-                if down_folder.exists() and st.button("📥 Downloads", key="btn_sc_downloads", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(down_folder.resolve())
-                    st.rerun()
-            with pc_shortcuts[2]:
-                desk_folder = Path.home() / "Desktop"
-                if desk_folder.exists() and st.button("🖥️ Desktop", key="btn_sc_desktop", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(desk_folder.resolve())
-                    st.rerun()
-
-            target_folder_path_pc = st.text_input(
-                "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
-                value=def_pc_path,
-                key="pc_folder_text_input",
-                help="ផ្លូវ Folder លើកុំព្យូទ័រដែលមានផ្ទុកវីដេអូ",
-            )
-            clean_pc_path = target_folder_path_pc.strip().strip('"').strip("'") if target_folder_path_pc else ""
-            st.session_state[user_session_folder_key] = clean_pc_path
-
-            if clean_pc_path and not folder_media_files:
-                p_pc = Path(clean_pc_path)
-                if p_pc.exists() and p_pc.is_dir():
-                    valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
-                    pc_found_files = sorted([f for f in p_pc.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
-                    if pc_found_files:
-                        folder_media_files = pc_found_files
-                        target_folder_path = clean_pc_path
-                        source_mode = "folder"
-                        st.success(f"✓ បានរកឃើញ {len(folder_media_files)} វីដេអូក្នុង Folder `{p_pc.name}`!")
-                    else:
-                        st.info(f"📂 Folder `{p_pc.name}` រួចរាល់ ប៉ុន្តែមិនទាន់មានឯកសារវីដេអូទេ។ សូម copy វីដេអូចូល ឬប្រើប្រាស់ផ្ទាំង Upload ខាងលើ!")
-                else:
-                    st.warning(f"⚠️ រកមិនឃើញ Folder: `{clean_pc_path}`")
-                    if st.button("➕ បង្កើត Folder នេះឥឡូវនេះ (Create Folder)", key="btn_create_pc_missing"):
-                        try:
-                            p_pc.mkdir(parents=True, exist_ok=True)
-                            st.success("✓ បានបង្កើត Folder រួចរាល់!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"មិនអាចបង្កើតបានទេ: {e}")
-
-        # Output folder path strictly isolated for current user
-        def_out = str(user_batch_out.resolve())
         batch_out_path = st.text_input(
             "💾 ថតរក្សាទុកលទ្ធផល (Output Folder):",
             value=def_out,
-            help=f"Rendered videos will be saved into {user_batch_out.resolve()}",
+            help=f"Rendered videos will be saved here.",
         )
 
         st.markdown("#### ⚙️ 2. កំណត់សំឡេង និងការ Mix (Pipeline Settings)")
@@ -3644,18 +3620,20 @@ with tab_batch_folder:
     with batch_col2:
         st.markdown("#### 📋 3. បញ្ជីឯកសារ និងវឌ្ឍនភាព (Progress & Results)")
 
-        if folder_media_files:
-            with st.expander(f"📁 បញ្ជីឯកសារក្នុង Folder ({len(folder_media_files)} files)", expanded=not bool(st.session_state.batch_dub_results)):
-                for idx, mf in enumerate(folder_media_files, 1):
+        active_files = [Path(p) for p in st.session_state.get("batch_media_files", []) if Path(p).exists()]
+        if active_files:
+            with st.expander(f"📁 បញ្ជីវីដេអូដែលបានជ្រើសរើស ({len(active_files)} files)", expanded=not bool(st.session_state.batch_dub_results)):
+                for idx, mf in enumerate(active_files, 1):
                     sz_mb = mf.stat().st_size / (1024 * 1024)
                     ext_icon = "🎬" if mf.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v"} else "🎧"
                     st.markdown(f"**{idx}.** {ext_icon} `{mf.name}` *({sz_mb:.1f} MB)*")
 
         if start_batch_btn:
-            if not folder_media_files:
-                st.error("⚠️ មិនមានឯកសារវីដេអូ ឬសម្លេងក្នុង Folder នេះទេ។ សូមពិនិត្យ Folder ម្តងទៀត។")
+            active_files = [Path(p) for p in st.session_state.get("batch_media_files", []) if Path(p).exists()]
+            if not active_files:
+                st.error("⚠️ មិនទាន់មានវីដេអូសម្រាប់ Dubbing ទេ។ សូម Upload វីដេអូ ឬជ្រើសរើស Folder ជាមុនសិន។")
             else:
-                st.info(f"🚀 កំពុងចាប់ផ្តើមដំណើរការ {len(folder_media_files)} ឯកសារក្នុងពេលតែមួយ...")
+                st.info(f"🚀 កំពុងចាប់ផ្តើមដំណើរការ {len(active_files)} ឯកសារ...")
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
                 log_box = st.empty()
@@ -3670,7 +3648,7 @@ with tab_batch_folder:
 
                 try:
                     res_summary = transcribe_one_folder(
-                        folder_path=target_folder_path if source_mode == "📁 Local Folder Path (Computer)" else None,
+                        file_list=active_files,
                         output_folder=batch_out_path,
                         model_name=pipeline_model,
                         source_language=source_language,
@@ -3687,7 +3665,6 @@ with tab_batch_folder:
                         orig_voice_vol=batch_orig_vol,
                         dub_volume=batch_dub_vol,
                         progress_callback=batch_progress_ui,
-                        file_list=folder_media_files if source_mode != "📁 Local Folder Path (Computer)" else None,
                         save_only_video=batch_save_only_video,
                     )
                     progress_bar.progress(1.0)
