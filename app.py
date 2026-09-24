@@ -65,9 +65,9 @@ def load_saved_config() -> dict:
         config["device_tokens"] = {}
     if "admin_contact" not in config:
         config["admin_contact"] = {
-            "telegram": "@Theadept168",
-            "phone": "+855 12 345 678",
-            "email": "admin@dubberai.com",
+            "telegram": "@Adsservice7",
+            "phone": "+855 768876797",
+            "email": "thea13389@gmail.com",
             "note": "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។",
         }
     if "admin_messages" not in config:
@@ -109,9 +109,9 @@ def save_saved_config(updates: dict) -> None:
 def get_admin_contact_info() -> dict:
     cfg = load_saved_config()
     return cfg.get("admin_contact", {
-        "telegram": "@Theadept168",
-        "phone": "+855 12 345 678",
-        "email": "admin@dubberai.com",
+        "telegram": "@Adsservice7",
+        "phone": "+855 768876797",
+        "email": "thea13389@gmail.com",
         "note": "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។",
     })
 
