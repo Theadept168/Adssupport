@@ -2498,7 +2498,7 @@ if st.session_state.get("_active_session_user") != _curr_auth_user:
 
         _user_batch_in = _user_storage_init / "batch_input"
         if _user_batch_in.exists():
-            _found_b = sorted([f for f in _user_batch_in.iterdir() if f.is_file() and f.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}])
+            _found_b = sorted([f for f in _user_batch_in.rglob("*") if f.is_file() and f.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}])
             if _found_b:
                 st.session_state.batch_media_files = _found_b
                 st.session_state.batch_target_folder = str(_user_batch_in.resolve())
@@ -3682,24 +3682,50 @@ with tab_batch_folder:
             if up_batch:
                 saved_files = []
                 for uf in up_batch:
-                    dest = user_batch_in / uf.name
+                    clean_rel = uf.name.replace("\\", "/").lstrip("/")
+                    dest = user_batch_in / Path(clean_rel)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(uf.getvalue())
                     saved_files.append(dest)
                 st.session_state.batch_media_files = saved_files
-                st.session_state.batch_target_folder = str(user_batch_in.resolve())
-                st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
-                st.success(f"✓ បានបញ្ចូល {len(saved_files)} វីដេអូពី Folder រួចរាល់!")
 
-            existing_in = sorted([f for f in user_batch_in.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+                # Detect if a subfolder was chosen (e.g. 小奶宝驾到)
+                sub_folder_name = ""
+                for sf in saved_files:
+                    try:
+                        if sf.parent != user_batch_in and sf.parent.is_relative_to(user_batch_in):
+                            sub_folder_name = sf.parent.name
+                            st.session_state.batch_target_folder = str(sf.parent.resolve())
+                            st.session_state[user_session_folder_key] = str(sf.parent.resolve())
+                            break
+                    except Exception:
+                        pass
+
+                if not sub_folder_name:
+                    st.session_state.batch_target_folder = str(user_batch_in.resolve())
+                    st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
+                    f_label = "Folder"
+                else:
+                    f_label = f"Folder `{sub_folder_name}`"
+
+                st.success(f"✓ បានបញ្ចូល {len(saved_files)} វីដេអូពី {f_label} រួចរាល់ ស្រេចសម្រាប់ Dubbing!")
+
+            existing_in = sorted([f for f in user_batch_in.rglob("*") if f.is_file() and f.suffix.lower() in valid_exts])
             if existing_in:
                 col_ex1, col_ex2 = st.columns([1.5, 1])
                 with col_ex1:
                     st.caption(f"📁 វីដេអូក្នុង Folder ផ្ទុករបស់អ្នក: **{len(existing_in)} files**")
                 with col_ex2:
                     if st.button("🗑️ សម្អាតចោល (Clear Uploads)", key="btn_clear_uploads", use_container_width=True):
-                        for f in existing_in:
+                        for f in user_batch_in.rglob("*"):
                             try:
-                                f.unlink()
+                                if f.is_file():
+                                    f.unlink()
+                            except Exception:
+                                pass
+                        for d in sorted([p for p in user_batch_in.rglob("*") if p.is_dir()], reverse=True):
+                            try:
+                                d.rmdir()
                             except Exception:
                                 pass
                         st.session_state.batch_media_files = []
