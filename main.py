@@ -30,6 +30,17 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+# If executed directly by Streamlit (e.g., Streamlit Community Cloud with main file 'main.py')
+try:
+    import streamlit as st
+    if hasattr(st, "runtime") and st.runtime.exists():
+        import runpy
+        _app_target = Path(__file__).resolve().parent / "app.py"
+        runpy.run_path(str(_app_target), run_name="__main__")
+        sys.exit(0)
+except Exception:
+    pass
+
 # Force UTF-8 encoding for Windows console
 if sys.platform == "win32":
     try:
