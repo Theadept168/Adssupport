@@ -60,6 +60,7 @@ AudioSegment.converter = FFMPEG_BIN
 AudioSegment.ffmpeg = FFMPEG_BIN
 
 
+DEFAULT_USERS_PATH = Path("default_users.json")
 USERS_REGISTRY_PATH = Path("users_registry.json")
 
 # Permanently preserved customer accounts (guaranteed never lost across reboots, redeploys, or containers)
@@ -121,18 +122,19 @@ def load_saved_config() -> dict:
         "admin_messages": [],
     }
 
-    # 1. Load permanent git-backed users and tokens from users_registry.json
-    if USERS_REGISTRY_PATH.exists():
-        try:
-            reg = json.loads(USERS_REGISTRY_PATH.read_text(encoding="utf-8"))
-            if isinstance(reg, dict):
-                for k, v in reg.items():
-                    if isinstance(v, dict) and isinstance(config.get(k), dict):
-                        config[k].update(v)
-                    else:
-                        config[k] = v
-        except (OSError, json.JSONDecodeError):
-            pass
+    # 1. Load permanent git-backed users and tokens from default_users.json and users_registry.json
+    for p_reg in [DEFAULT_USERS_PATH, USERS_REGISTRY_PATH]:
+        if p_reg.exists():
+            try:
+                reg = json.loads(p_reg.read_text(encoding="utf-8"))
+                if isinstance(reg, dict):
+                    for k, v in reg.items():
+                        if isinstance(v, dict) and isinstance(config.get(k), dict):
+                            config[k].update(v)
+                        else:
+                            config[k] = v
+            except (OSError, json.JSONDecodeError):
+                pass
 
     # 2. Overlay any dynamic runtime changes from local .dubber_config.json
     if CONFIG_PATH.exists():
@@ -186,7 +188,7 @@ def save_saved_config(updates: dict) -> None:
     except OSError:
         pass
 
-    # Automatically sync users and contacts to git-backed users_registry.json (excluding secrets)
+    # Automatically sync users and contacts to git-backed default_users.json and users_registry.json (excluding secrets)
     if "auth_users" in updates or "pending_users" in updates or "device_tokens" in updates or "admin_contact" in updates:
         try:
             backup_data = {
@@ -195,7 +197,9 @@ def save_saved_config(updates: dict) -> None:
                 "device_tokens": current.get("device_tokens", {}),
                 "admin_contact": current.get("admin_contact", {})
             }
-            USERS_REGISTRY_PATH.write_text(json.dumps(backup_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            json_text = json.dumps(backup_data, indent=2, ensure_ascii=False)
+            DEFAULT_USERS_PATH.write_text(json_text, encoding="utf-8")
+            USERS_REGISTRY_PATH.write_text(json_text, encoding="utf-8")
         except OSError:
             pass
 
