@@ -36,10 +36,14 @@ STORAGE_DIR = BASE_STORAGE_DIR  # fallback reference
 def get_user_storage_dir(username: str = None) -> Path:
     if not username:
         try:
-            username = st.session_state.get("auth_user", "admin")
+            if hasattr(st, "session_state"):
+                username = st.session_state.get("auth_user", "")
         except Exception:
-            username = "admin"
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", str(username or "admin")).strip().lower() or "admin"
+            username = ""
+    if not username:
+        safe_name = "guest"
+    else:
+        safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", str(username)).strip().lower() or "guest"
     user_dir = BASE_STORAGE_DIR / "users" / safe_name
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
@@ -2310,33 +2314,67 @@ def complete_user_login(username: str, remember: bool):
 
 
 if not st.session_state.authenticated:
-    _, col_login, _ = st.columns([1, 1.4, 1])
-    with col_login:
+    # Full widescreen layout: Left side = Studio Showcase, Features & Customer Reviews (Ratings); Right side = Sign In & Sign Up + Quick Admin Contact
+    col_showcase, col_auth = st.columns([1.25, 1], gap="large")
+
+    with col_showcase:
+        st.markdown(
+            """<div style="background: linear-gradient(145deg, rgba(30, 41, 59, 0.75) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 20px; padding: 26px 28px; margin-bottom: 16px;">
+<div style="display: inline-flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); padding: 5px 14px; border-radius: 999px; color: #38bdf8; font-size: 0.78rem; font-weight: 700; margin-bottom: 14px;">
+🎙️ AI LOCALIZATION & VIDEO DUBBING STUDIO
+</div>
+<h1 style="font-size: 2.2rem; font-weight: 800; color: #ffffff; margin: 0 0 10px 0; line-height: 1.25;">
+Dubber AI <span style="background: linear-gradient(135deg, #38bdf8 0%, #34d399 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Pro Studio</span>
+</h1>
+<p style="font-size: 0.96rem; color: #cbd5e1; line-height: 1.65; margin: 0 0 18px 0;">
+ប្រព័ន្ធ AI ស្វ័យប្រវត្តិកម្រិតខ្ពស់សម្រាប់ទាញយកសំឡេង ស្រង់ Subtitles បកប្រែជាភាសាខ្មែរ និងបញ្ចូលសំឡេងស្វ័យប្រវត្តិ (Whisper AI + Microsoft Edge Neural TTS) បង្កើតវីដេអូ TikTok, Reels, YouTube រហ័ស និងមានគុណភាពខ្ពស់បំផុត!
+</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 8px;">
+<div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 12px 14px;">
+<div style="font-size: 0.92rem; font-weight: 700; color: #38bdf8;">⚡ 1-Click Folder Dubbing</div>
+<div style="font-size: 0.78rem; color: #94a3b8; margin-top: 3px;">បកប្រែ និងបញ្ចូលសម្លេងម្ដងមួយ Folder ស្វ័យប្រវត្តិ មិនបាច់រង់ចាំយូរ</div>
+</div>
+<div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 12px 14px;">
+<div style="font-size: 0.92rem; font-weight: 700; color: #34d399;">🎭 Dual Voice System</div>
+<div style="font-size: 0.78rem; color: #94a3b8; margin-top: 3px;">និយាយប្រុសផងស្រីផងក្នុងវីដេអូតែមួយ (Piseth 👨 + Sreymom 👩)</div>
+</div>
+<div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 12px 14px;">
+<div style="font-size: 0.92rem; font-weight: 700; color: #fbbf24;">📝 Khmer Hardsub Burner</div>
+<div style="font-size: 0.78rem; color: #94a3b8; margin-top: 3px;">បង្កប់ Subtitle ខ្មែរលើវីដេអូច្បាស់ស្អាត Font ខ្មែរត្រឹមត្រូវ</div>
+</div>
+<div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 12px 14px;">
+<div style="font-size: 0.92rem; font-weight: 700; color: #a78bfa;">📱 Multi-Platform Ready</div>
+<div style="font-size: 0.78rem; color: #94a3b8; margin-top: 3px;">ដំណើរការយ៉ាងរលូនទាំងលើទូរស័ព្ទដៃ Smartphone និងកុំព្យូទ័រ PC</div>
+</div>
+</div>
+</div>""",
+            unsafe_allow_html=True,
+        )
+        render_social_proof_reviews(key_prefix="auth_showcase", compact=False)
+
+    with col_auth:
         # Show session-lock warning if kicked out by another device
         _lock_msg = st.session_state.get("session_lock_alert", "")
         if _lock_msg:
             st.markdown(
-                f"""
-                <div style="background: linear-gradient(135deg, rgba(239,68,68,0.18) 0%, rgba(15,23,42,0.95) 100%);
-                            border: 2px solid rgba(239,68,68,0.55); border-radius: 16px; padding: 18px 20px;
-                            margin-bottom: 1.2rem; text-align: center;">
-                    <div style="font-size: 1.5rem; margin-bottom: 6px;">⚠️</div>
-                    <div style="font-size: 0.95rem; font-weight: 700; color: #f87171; margin-bottom: 6px;">ការព្រមាន / Security Alert</div>
-                    <div style="font-size: 0.87rem; color: #fca5a5; line-height: 1.65;">{_lock_msg}</div>
-                </div>
-                """,
+                f"""<div style="background: linear-gradient(135deg, rgba(239,68,68,0.18) 0%, rgba(15,23,42,0.95) 100%);
+border: 2px solid rgba(239,68,68,0.55); border-radius: 16px; padding: 18px 20px;
+margin-bottom: 1.2rem; text-align: center;">
+<div style="font-size: 1.5rem; margin-bottom: 6px;">⚠️</div>
+<div style="font-size: 0.95rem; font-weight: 700; color: #f87171; margin-bottom: 6px;">ការព្រមាន / Security Alert</div>
+<div style="font-size: 0.87rem; color: #fca5a5; line-height: 1.65;">{_lock_msg}</div>
+</div>""",
                 unsafe_allow_html=True,
             )
             st.session_state.session_lock_alert = ""
+
         st.markdown(
-            """
-            <div class="login-container-card">
-                <div class="login-badge">🔒 Studio Access Portal</div>
-                <div style="font-size: 2.8rem; margin: 0.2rem 0 0.4rem 0;">🎙️</div>
-                <h2 class="login-title-text">Dubber AI Pro Studio</h2>
-                <p class="login-desc-text">Sign in to your account or register for new studio access.</p>
-            </div>
-            """,
+            """<div class="login-container-card" style="margin-top: 0; padding: 1.8rem 1.6rem;">
+<div class="login-badge">🔒 Studio Access Portal</div>
+<div style="font-size: 2.2rem; margin: 0.2rem 0 0.3rem 0;">🎙️</div>
+<h2 class="login-title-text" style="font-size: 1.5rem;">ចូលប្រើប្រាស់ Studio</h2>
+<p class="login-desc-text" style="font-size: 0.85rem; margin-bottom: 0;">Sign in to your account or register for new studio access.</p>
+</div>""",
             unsafe_allow_html=True,
         )
 
@@ -2357,19 +2395,68 @@ if not st.session_state.authenticated:
                         auth_users = _fresh_cfg.get("auth_users", {})
                         pending_users = _fresh_cfg.get("pending_users", {})
 
+                        _valid_login = False
                         if login_username in pending_users:
                             st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
                             render_contact_admin(key_prefix="login_pending", compact=False)
                         elif login_username in auth_users:
                             expected_pw = get_user_password(auth_users[login_username])
                             if login_password == expected_pw:
-                                complete_user_login(login_username, save_device)
+                                _valid_login = True
                             else:
                                 st.error("❌ Incorrect password. Please try again.")
                         elif login_username == "admin" and login_password in ("dubber123", "admin123"):
-                            complete_user_login("admin", save_device)
+                            _valid_login = True
                         else:
                             st.error("❌ Invalid username or password. If you don't have an account, click 'Create Account' above.")
+
+                        if _valid_login:
+                            # Strict single-device check
+                            u_info = auth_users.get(login_username, {}) if isinstance(auth_users.get(login_username), dict) else {}
+                            live_tok = u_info.get("active_session_token", "")
+                            live_dev = u_info.get("active_device_name", "") or "ឧបករណ៍មួយផ្សេងទៀត"
+                            client_dev = get_client_device_info().get("device_name", "")
+
+                            # If another device is actively using this account:
+                            if live_tok and live_dev and live_dev != client_dev and live_tok != st.session_state.get("session_token", ""):
+                                st.session_state["takeover_user"] = login_username
+                                st.session_state["takeover_save"] = save_device
+                                st.session_state["takeover_active_dev"] = live_dev
+                            else:
+                                complete_user_login(login_username, save_device)
+
+            if st.session_state.get("takeover_user"):
+                t_user = st.session_state.get("takeover_user")
+                t_save = st.session_state.get("takeover_save", True)
+                t_dev = st.session_state.get("takeover_active_dev", "ឧបករណ៍ផ្សេងទៀត")
+                st.markdown(
+                    f"""
+                    <div style="background: rgba(239, 68, 68, 0.12); border: 1.5px solid rgba(239, 68, 68, 0.5); border-radius: 14px; padding: 14px 16px; margin: 12px 0;">
+                        <div style="font-weight: 700; color: #f87171; font-size: 0.96rem; margin-bottom: 5px;">
+                            ⚠️ គណនីកំពុងមានអ្នកប្រើប្រាស់នៅលើឧបករណ៍ផ្សេង! (Account Already In Use)
+                        </div>
+                        <div style="font-size: 0.85rem; color: #fca5a5; line-height: 1.6;">
+                            គណនី <b>{t_user}</b> កំពុងបើកដំណើរការនៅលើ <b>{t_dev}</b>។<br>
+                            🔒 <b>មួយគណនីអាចប្រើប្រាស់បានតែ ១ ឧបករណ៍ប៉ុណ្ណោះ</b> មិនអាចប្រើដំណាលគ្នាបានទេ។<br>
+                            ប្រសិនបើអ្នកជាម្ចាស់គណនីពិតប្រាកដ ហើយចង់ប្តូរមកប្រើលើឧបករណ៍នេះ សូមចុចប៊ូតុងខាងក្រោមដើម្បីកាត់ផ្តាច់ឧបករណ៍ចាស់៖
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                col_t1, col_t2 = st.columns([1.5, 1])
+                with col_t1:
+                    if st.button("🚪 ផ្តាច់ឧបករណ៍ចាស់ ហើយចូលប្រើនៅទីនេះ", type="primary", use_container_width=True, key="btn_confirm_takeover"):
+                        st.session_state.pop("takeover_user", None)
+                        st.session_state.pop("takeover_save", None)
+                        st.session_state.pop("takeover_active_dev", None)
+                        complete_user_login(t_user, t_save)
+                with col_t2:
+                    if st.button("❌ Cancel", use_container_width=True, key="btn_cancel_takeover"):
+                        st.session_state.pop("takeover_user", None)
+                        st.session_state.pop("takeover_save", None)
+                        st.session_state.pop("takeover_active_dev", None)
+                        st.rerun()
 
         with tab_signup:
             with st.form(key="dubber_signup_form"):
@@ -2415,8 +2502,6 @@ if not st.session_state.authenticated:
                         render_contact_admin(key_prefix="reg_success", compact=False)
 
         st.markdown("---")
-        render_social_proof_reviews(key_prefix="auth_page", compact=False)
-        st.markdown("---")
         render_contact_admin(key_prefix="auth_page_footer", compact=False)
     st.stop()
 
@@ -2459,29 +2544,64 @@ st.markdown(
 # ==========================================
 # Session State Initialization & Auto-Restore
 # ==========================================
-_curr_user_for_init = st.session_state.get("auth_user", "admin")
-_user_storage_init = get_user_storage_dir(_curr_user_for_init)
-_init_video = _user_storage_init / "dubbed_output.mp4"
-_init_audio = _user_storage_init / "dubbed_voiceover.wav"
-_init_srt = _user_storage_init / "burn_subtitles.srt"
-_init_media = _user_storage_init / "uploaded_media.mp4"
-if not _init_media.exists():
-    _init_media = _user_storage_init / "target_video.mp4"
+_curr_auth_user = st.session_state.get("auth_user", "")
+_user_storage_init = get_user_storage_dir(_curr_auth_user)
+
+# When a user logs in or switches, reset session state so videos never collide between accounts
+if st.session_state.get("_active_session_user") != _curr_auth_user:
+    st.session_state._active_session_user = _curr_auth_user
+    st.session_state.source_srt = ""
+    st.session_state.khmer_srt = ""
+    st.session_state.uploaded_media_path = ""
+    st.session_state.is_video = False
+    st.session_state.dubbed_audio_bytes = None
+    st.session_state.dubbed_audio_path = ""
+    st.session_state.output_video_path = ""
+    st.session_state.subtitle_voices = {}
+    st.session_state.detected_voice_info = None
+    st.session_state.batch_dub_results = None
+    st.session_state.batch_folder_path = ""
+
+    # Restore from this user's private storage folder only
+    if _curr_auth_user:
+        _init_video = _user_storage_init / "dubbed_output.mp4"
+        _init_audio = _user_storage_init / "dubbed_voiceover.wav"
+        _init_srt = _user_storage_init / "burn_subtitles.srt"
+        _init_media = _user_storage_init / "uploaded_media.mp4"
+        if not _init_media.exists():
+            _init_media = _user_storage_init / "target_video.mp4"
+
+        if _init_srt.exists():
+            try:
+                st.session_state.khmer_srt = _init_srt.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        if _init_media.exists():
+            st.session_state.uploaded_media_path = str(_init_media.resolve())
+            st.session_state.is_video = True
+        if _init_audio.exists():
+            try:
+                st.session_state.dubbed_audio_bytes = _init_audio.read_bytes()
+                st.session_state.dubbed_audio_path = str(_init_audio.resolve())
+            except Exception:
+                pass
+        if _init_video.exists():
+            st.session_state.output_video_path = str(_init_video.resolve())
 
 if "source_srt" not in st.session_state:
     st.session_state.source_srt = ""
 if "khmer_srt" not in st.session_state:
-    st.session_state.khmer_srt = _init_srt.read_text(encoding="utf-8") if _init_srt.exists() else ""
+    st.session_state.khmer_srt = ""
 if "uploaded_media_path" not in st.session_state:
-    st.session_state.uploaded_media_path = str(_init_media.resolve()) if _init_media.exists() else ""
+    st.session_state.uploaded_media_path = ""
 if "is_video" not in st.session_state:
-    st.session_state.is_video = bool(_init_media.exists())
+    st.session_state.is_video = False
 if "dubbed_audio_bytes" not in st.session_state:
-    st.session_state.dubbed_audio_bytes = _init_audio.read_bytes() if _init_audio.exists() else None
+    st.session_state.dubbed_audio_bytes = None
 if "dubbed_audio_path" not in st.session_state:
-    st.session_state.dubbed_audio_path = str(_init_audio.resolve()) if _init_audio.exists() else ""
+    st.session_state.dubbed_audio_path = ""
 if "output_video_path" not in st.session_state:
-    st.session_state.output_video_path = str(_init_video.resolve()) if _init_video.exists() else ""
+    st.session_state.output_video_path = ""
 if "enable_bg_music" not in st.session_state:
     st.session_state.enable_bg_music = False
 if "bg_music_vol" not in st.session_state:
@@ -3335,12 +3455,18 @@ with tab_batch_folder:
         folder_media_files = []
         target_folder_path = ""
 
+        user_storage = get_user_storage_dir()
+        user_batch_in = user_storage / "batch_input"
+        user_batch_out = user_storage / "batch_outputs"
+        user_batch_in.mkdir(parents=True, exist_ok=True)
+        user_batch_out.mkdir(parents=True, exist_ok=True)
+
         if source_mode == "📁 Local Folder Path (Computer)":
-            def_path = st.session_state.get("batch_folder_path") or str(Path.cwd().resolve())
+            def_path = st.session_state.get("batch_folder_path") or str(user_batch_in.resolve())
             target_folder_path = st.text_input(
                 "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
                 value=def_path,
-                help="Enter the full path to the folder containing your videos or audio files (e.g., D:/Videos or C:/Users/.../Videos)",
+                help=f"Folder សម្រាប់ផ្ទុកវិដេអូរបស់គណនី {st.session_state.get('auth_user', '')}. Default: {user_batch_in.resolve()}",
             )
             st.session_state.batch_folder_path = target_folder_path
 
@@ -3371,7 +3497,7 @@ with tab_batch_folder:
                 help="Support batch upload from phone gallery or files",
             )
             if uploaded_batch_files:
-                batch_upload_dir = get_user_storage_dir() / "batch_uploaded_input"
+                batch_upload_dir = user_batch_in
                 batch_upload_dir.mkdir(parents=True, exist_ok=True)
                 folder_media_files = []
                 for up_f in uploaded_batch_files:
@@ -3381,12 +3507,12 @@ with tab_batch_folder:
                 st.success(f"✓ បានបញ្ចូល {len(folder_media_files)} ឯកសាររួចរាល់សម្រាប់ដំណើរការ!")
                 target_folder_path = str(batch_upload_dir.resolve())
 
-        # Output folder path
-        def_out = str((Path(target_folder_path) / "dubbed_outputs").resolve()) if target_folder_path else str((get_user_storage_dir() / "batch_outputs").resolve())
+        # Output folder path strictly isolated for current user
+        def_out = str(user_batch_out.resolve())
         batch_out_path = st.text_input(
             "💾 ថតរក្សាទុកលទ្ធផល (Output Folder):",
             value=def_out,
-            help="Rendered videos (.MP4), Khmer subtitles (.SRT), and dubbed audio (.WAV) will be saved here.",
+            help=f"Rendered videos will be saved into {user_batch_out.resolve()}",
         )
 
         st.markdown("#### ⚙️ 2. កំណត់សំឡេង និងការ Mix (Pipeline Settings)")
