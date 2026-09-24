@@ -60,47 +60,99 @@ AudioSegment.converter = FFMPEG_BIN
 AudioSegment.ffmpeg = FFMPEG_BIN
 
 
-DEFAULT_USERS_PATH = Path("default_users.json")
+USERS_REGISTRY_PATH = Path("users_registry.json")
+
+# Permanently preserved customer accounts (guaranteed never lost across reboots, redeploys, or containers)
+DEFAULT_AUTH_USERS = {
+    "admin": {
+        "password": "dubber123",
+        "role": "admin",
+        "status": "approved"
+    },
+    "Thea": {
+        "password": "121212",
+        "name": "asewwsw",
+        "role": "user",
+        "status": "approved",
+        "approved_at": "2026-09-23 10:21"
+    },
+    "mingling": {
+        "password": "8754",
+        "name": "lingming",
+        "role": "user",
+        "status": "approved",
+        "approved_at": "2026-09-23 22:41"
+    },
+    "Lypey": {
+        "password": "Lypey150407",
+        "name": "Lypey",
+        "role": "user",
+        "status": "approved",
+        "approved_at": "2026-09-23 22:42"
+    },
+    "0979994612": {
+        "password": "510171",
+        "name": "Phan samphors",
+        "role": "user",
+        "status": "approved",
+        "approved_at": "2026-09-24 01:07"
+    },
+    "tii12345": {
+        "password": "14789",
+        "name": "tii tii 12",
+        "role": "user",
+        "status": "approved",
+        "approved_at": "2026-09-24 03:54"
+    }
+}
 
 
 def load_saved_config() -> dict:
-    config = {}
-    # First load permanent git-backed users and tokens
-    if DEFAULT_USERS_PATH.exists():
-        try:
-            config = json.loads(DEFAULT_USERS_PATH.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            config = {}
-
-    # Then overlay any dynamic runtime changes from .dubber_config.json
-    if CONFIG_PATH.exists():
-        try:
-            runtime_cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            for k, v in runtime_cfg.items():
-                if isinstance(v, dict) and isinstance(config.get(k), dict):
-                    config[k].update(v)
-                else:
-                    config[k] = v
-        except (OSError, json.JSONDecodeError):
-            pass
-
-    if "auth_users" not in config:
-        config["auth_users"] = {"admin": {"password": "dubber123", "role": "admin", "status": "approved"}}
-    if "pending_users" not in config:
-        config["pending_users"] = {}
-    if "device_tokens" not in config:
-        config["device_tokens"] = {}
-    if "admin_contact" not in config:
-        config["admin_contact"] = {
+    config = {
+        "auth_users": dict(DEFAULT_AUTH_USERS),
+        "pending_users": {},
+        "device_tokens": {},
+        "admin_contact": {
             "telegram": "@Adsservice7",
             "phone": "+855 768876797",
             "email": "thea13389@gmail.com",
             "note": "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។",
-        }
-    if "admin_messages" not in config:
-        config["admin_messages"] = []
-    if "custom_reviews" not in config:
-        config["custom_reviews"] = []
+        },
+        "admin_messages": [],
+    }
+
+    # 1. Load permanent git-backed users and tokens from users_registry.json
+    if USERS_REGISTRY_PATH.exists():
+        try:
+            reg = json.loads(USERS_REGISTRY_PATH.read_text(encoding="utf-8"))
+            if isinstance(reg, dict):
+                for k, v in reg.items():
+                    if isinstance(v, dict) and isinstance(config.get(k), dict):
+                        config[k].update(v)
+                    else:
+                        config[k] = v
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # 2. Overlay any dynamic runtime changes from local .dubber_config.json
+    if CONFIG_PATH.exists():
+        try:
+            runtime_cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(runtime_cfg, dict):
+                for k, v in runtime_cfg.items():
+                    if isinstance(v, dict) and isinstance(config.get(k), dict):
+                        config[k].update(v)
+                    else:
+                        config[k] = v
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Ensure all DEFAULT_AUTH_USERS are always guaranteed present
+    for def_u, def_val in DEFAULT_AUTH_USERS.items():
+        if def_u not in config["auth_users"]:
+            config["auth_users"][def_u] = def_val
+
+    # 3. Streamlit secrets overrides if provided
     try:
         if hasattr(st, "secrets") and st.secrets:
             if "GEMINI_API_KEY" in st.secrets:
@@ -133,14 +185,17 @@ def save_saved_config(updates: dict) -> None:
         CONFIG_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
-    if "auth_users" in updates or "device_tokens" in updates:
+
+    # Automatically sync users and contacts to git-backed users_registry.json (excluding secrets)
+    if "auth_users" in updates or "pending_users" in updates or "device_tokens" in updates or "admin_contact" in updates:
         try:
             backup_data = {
                 "auth_users": current.get("auth_users", {}),
+                "pending_users": current.get("pending_users", {}),
                 "device_tokens": current.get("device_tokens", {}),
                 "admin_contact": current.get("admin_contact", {})
             }
-            DEFAULT_USERS_PATH.write_text(json.dumps(backup_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            USERS_REGISTRY_PATH.write_text(json.dumps(backup_data, indent=2, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass
 
@@ -2374,22 +2429,39 @@ margin-bottom: 1.2rem; text-align: center;">
                     pending_users = _fresh_cfg.get("pending_users", {})
 
                     _valid_login = False
-                    if login_username in pending_users:
-                        st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
-                        render_contact_admin(key_prefix="login_pending", compact=False)
-                    elif login_username in auth_users:
-                        expected_pw = get_user_password(auth_users[login_username])
-                        if login_password == expected_pw:
-                            _valid_login = True
-                        else:
-                            st.error("❌ Incorrect password. Please try again.")
-                    elif login_username == "admin" and login_password in ("dubber123", "admin123"):
+                    target_user = None
+
+                    # 1. Check pending (case-insensitive)
+                    for pu in pending_users:
+                        if pu.strip().lower() == login_username.lower():
+                            st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
+                            render_contact_admin(key_prefix="login_pending", compact=False)
+                            target_user = pu
+                            break
+
+                    # 2. Check approved users (case-insensitive)
+                    if not target_user:
+                        for au, a_info in auth_users.items():
+                            if au.strip().lower() == login_username.lower():
+                                expected_pw = get_user_password(a_info)
+                                if login_password == expected_pw:
+                                    _valid_login = True
+                                    target_user = au
+                                else:
+                                    st.error("❌ Incorrect password. Please try again.")
+                                    target_user = au
+                                break
+
+                    # 3. Admin fallback
+                    if not target_user and login_username.lower() == "admin" and login_password in ("dubber123", "admin123"):
                         _valid_login = True
-                    else:
+                        target_user = "admin"
+
+                    if not target_user:
                         st.error("❌ Invalid username or password. If you don't have an account, click 'Create Account' above.")
 
-                    if _valid_login:
-                        complete_user_login(login_username, save_device)
+                    if _valid_login and target_user:
+                        complete_user_login(target_user, save_device)
 
         with tab_signup:
             with st.form(key="dubber_signup_form"):

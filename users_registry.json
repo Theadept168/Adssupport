@@ -1,0 +1,91 @@
+{
+  "auth_users": {
+    "admin": {
+      "password": "dubber123",
+      "role": "admin",
+      "status": "approved",
+      "last_device": {
+        "device_name": "Windows PC • Chrome",
+        "ip": "119.13.57.51",
+        "login_time": "2026-09-24 03:50"
+      },
+      "last_login": "2026-09-24 03:50",
+      "active_session_token": "ecc3fc80957814270791f14c40e24750bd3914e9a9356538",
+      "active_device_name": "Windows PC • Chrome"
+    },
+    "Thea": {
+      "password": "121212",
+      "name": "asewwsw",
+      "role": "user",
+      "status": "approved",
+      "approved_at": "2026-09-23 10:21",
+      "last_device": {
+        "device_name": "iPhone (iOS) • Safari",
+        "ip": "119.13.57.51",
+        "login_time": "2026-09-24 02:06"
+      },
+      "last_login": "2026-09-24 02:06",
+      "active_session_token": "d71ecbffaf1d7b7bf5a9ca66d04341111ecc9b6115668b31",
+      "active_device_name": "iPhone (iOS) • Safari"
+    },
+    "mingling": {
+      "password": "8754",
+      "name": "lingming",
+      "role": "user",
+      "status": "approved",
+      "approved_at": "2026-09-23 22:41",
+      "last_device": {
+        "device_name": "Windows PC • Chrome",
+        "ip": "119.13.57.51",
+        "login_time": "2026-09-24 03:50"
+      },
+      "last_login": "2026-09-24 03:50",
+      "active_session_token": "122c360730a4d3def3bb58804dbb233a710cf373a115e7f3",
+      "active_device_name": "Windows PC • Chrome"
+    },
+    "Lypey": {
+      "password": "Lypey150407",
+      "name": "Lypey",
+      "role": "user",
+      "status": "approved",
+      "approved_at": "2026-09-23 22:42",
+      "last_device": {
+        "device_name": "Windows PC • Chrome",
+        "ip": "119.13.57.51",
+        "login_time": "2026-09-24 04:37"
+      },
+      "last_login": "2026-09-24 04:37",
+      "active_session_token": "192c13bb0c4df8db6be713c5b270e481ebc31d994d77fe03",
+      "active_device_name": "Windows PC • Chrome"
+    },
+    "0979994612": {
+      "password": "510171",
+      "name": "Phan samphors",
+      "role": "user",
+      "status": "approved",
+      "approved_at": "2026-09-24 01:07"
+    },
+    "tii12345": {
+      "password": "14789",
+      "name": "tii tii 12",
+      "role": "user",
+      "status": "approved",
+      "approved_at": "2026-09-24 03:54",
+      "last_device": {
+        "device_name": "Windows PC • Chrome",
+        "ip": "119.13.57.51",
+        "login_time": "2026-09-24 04:38"
+      },
+      "last_login": "2026-09-24 04:38",
+      "active_session_token": "71c9d9d314fa7fffec4bf569661187f6cd0c3da8a2acbebb",
+      "active_device_name": "Windows PC • Chrome"
+    }
+  },
+  "pending_users": {},
+  "admin_contact": {
+    "telegram": "@Adsservice7",
+    "phone": "+855 768876797",
+    "email": "thea13389@gmail.com",
+    "note": "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។"
+  }
+}
