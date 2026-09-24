@@ -3547,6 +3547,27 @@ with tab_batch_folder:
                     st.session_state.explorer_current_dir = "C:/"
                     st.rerun()
 
+            # 2B. Hongguo Drama Series Quick Selector
+            hongguo_base = Path.home() / "Videos" / "Hongguo"
+            if not hongguo_base.exists():
+                hongguo_base = Path("D:/Tool Download movie chin/Hongguo")
+
+            if hongguo_base.exists():
+                drama_list = sorted([d.name for d in hongguo_base.iterdir() if d.is_dir()])
+                if drama_list:
+                    st.markdown("<p style='font-size:0.83rem; color:#38bdf8; margin: 6px 0 2px 0;'>🎬 ជ្រើសរើសរឿងចិនពី Hongguo (Hongguo Drama Series):</p>", unsafe_allow_html=True)
+                    col_hg1, col_hg2 = st.columns([2, 1])
+                    with col_hg1:
+                        sel_drama = st.selectbox("រឿងដែលមានស្រាប់:", ["-- ជ្រើសរើសរឿង --"] + drama_list, key="sel_hongguo_drama", label_visibility="collapsed")
+                    with col_hg2:
+                        if sel_drama != "-- ជ្រើសរើសរឿង --" and st.button("▶️ ជ្រើសរើសរឿងនេះ", key="btn_apply_hongguo_drama", use_container_width=True):
+                            drama_p = hongguo_base / sel_drama
+                            st.session_state[user_session_folder_key] = str(drama_p.resolve())
+                            st.session_state.batch_target_folder = str(drama_p.resolve())
+                            st.session_state.explorer_current_dir = str(drama_p.resolve())
+                            st.toast(f"✅ បានជ្រើសរើសរឿង: {sel_drama}!", icon="🎬")
+                            st.rerun()
+
             # 3. Interactive In-Browser Visual Folder Tree Explorer
             if "explorer_current_dir" not in st.session_state:
                 st.session_state.explorer_current_dir = def_pc_path if (Path(def_pc_path).exists() and Path(def_pc_path).is_dir()) else str(Path.home().resolve())
@@ -3603,6 +3624,18 @@ with tab_batch_folder:
                 help="បញ្ចូលផ្លូវ Folder ដូចជា D:/Videos ឬ C:/Users/.../Videos ឬ \\\\192.168.1.5\\Shared",
             )
             clean_p = pc_path_input.strip().strip('"').strip("'") if pc_path_input else ""
+
+            # Smart path normalizer for client username mismatch (e.g. C:\Users\Adsservicevip\Videos\... on server host)
+            if clean_p and not Path(clean_p).exists() and ("\\Videos\\" in clean_p or "/Videos/" in clean_p):
+                tail_part = re.split(r"[\\/]Videos[\\/]", clean_p, flags=re.IGNORECASE)[-1]
+                mapped_local = Path.home() / "Videos" / tail_part
+                if mapped_local.exists():
+                    clean_p = str(mapped_local.resolve())
+                else:
+                    srv_mapped = BASE_STORAGE_DIR / tail_part
+                    if srv_mapped.exists():
+                        clean_p = str(srv_mapped.resolve())
+
             st.session_state[user_session_folder_key] = clean_p
 
             if clean_p:
