@@ -216,17 +216,16 @@ def render_contact_admin(key_prefix: str = "main", compact: bool = False):
         st.markdown(html, unsafe_allow_html=True)
 
     with st.expander("✉️ ផ្ញើសារផ្ទាល់ទៅ Admin (Send In-App Message)", expanded=False):
-        with st.form(key=f"form_contact_admin_{key_prefix}"):
-            msg_sender = st.text_input("Your Name / Username", value=st.session_state.get("auth_user", ""), placeholder="Enter your name", key=f"inp_msg_sender_{key_prefix}").strip()
-            msg_contact = st.text_input("Your Contact (Phone / Telegram / Email)", placeholder="e.g. @telegram or 012 345 678", key=f"inp_msg_contact_{key_prefix}").strip()
-            msg_body = st.text_area("Message / Question (សាររបស់អ្នក)", placeholder="Describe your question or request to Admin...", key=f"inp_msg_body_{key_prefix}").strip()
-            btn_send = st.form_submit_button("📤 ផ្ញើសារទៅ Admin", type="primary", use_container_width=True)
-            if btn_send:
-                if not msg_body:
-                    st.error("Please enter a message.")
-                else:
-                    send_message_to_admin(msg_sender, msg_contact, msg_body)
-                    st.success("✅ សាររបស់អ្នកត្រូវបានផ្ញើទៅ Admin រួចរាល់ហើយ! Admin នឹងពិនិត្យមើលក្នុងពេលឆាប់ៗ។")
+        msg_sender = st.text_input("Your Name / Username", value=st.session_state.get("auth_user", ""), placeholder="Enter your name", key=f"inp_msg_sender_{key_prefix}").strip()
+        msg_contact = st.text_input("Your Contact (Phone / Telegram / Email)", placeholder="e.g. @telegram or 012 345 678", key=f"inp_msg_contact_{key_prefix}").strip()
+        msg_body = st.text_area("Message / Question (សាររបស់អ្នក)", placeholder="Describe your question or request to Admin...", key=f"inp_msg_body_{key_prefix}").strip()
+        btn_send = st.button("📤 ផ្ញើសារទៅ Admin", type="primary", use_container_width=True, key=f"btn_send_admin_{key_prefix}")
+        if btn_send:
+            if not msg_body:
+                st.error("Please enter a message.")
+            else:
+                send_message_to_admin(msg_sender, msg_contact, msg_body)
+                st.success("✅ សាររបស់អ្នកត្រូវបានផ្ញើទៅ Admin រួចរាល់ហើយ! Admin នឹងពិនិត្យមើលក្នុងពេលឆាប់ៗ។")
 
 
 DEFAULT_CUSTOMER_REVIEWS = [
@@ -2339,31 +2338,31 @@ margin-bottom: 1.2rem; text-align: center;">
                 save_device = st.checkbox("📱 Save this device (stay signed in on this phone/PC)", value=True, help="Remembers this device so you don't have to enter your password again.")
                 btn_submit_login = st.form_submit_button("🚀 Sign In to Studio", type="primary", use_container_width=True)
 
-                if btn_submit_login:
-                    if not login_username or not login_password:
-                        st.error("Please enter both username and password.")
-                    else:
-                        _fresh_cfg = load_saved_config()
-                        auth_users = _fresh_cfg.get("auth_users", {})
-                        pending_users = _fresh_cfg.get("pending_users", {})
+            if btn_submit_login:
+                if not login_username or not login_password:
+                    st.error("Please enter both username and password.")
+                else:
+                    _fresh_cfg = load_saved_config()
+                    auth_users = _fresh_cfg.get("auth_users", {})
+                    pending_users = _fresh_cfg.get("pending_users", {})
 
-                        _valid_login = False
-                        if login_username in pending_users:
-                            st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
-                            render_contact_admin(key_prefix="login_pending", compact=False)
-                        elif login_username in auth_users:
-                            expected_pw = get_user_password(auth_users[login_username])
-                            if login_password == expected_pw:
-                                _valid_login = True
-                            else:
-                                st.error("❌ Incorrect password. Please try again.")
-                        elif login_username == "admin" and login_password in ("dubber123", "admin123"):
+                    _valid_login = False
+                    if login_username in pending_users:
+                        st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
+                        render_contact_admin(key_prefix="login_pending", compact=False)
+                    elif login_username in auth_users:
+                        expected_pw = get_user_password(auth_users[login_username])
+                        if login_password == expected_pw:
                             _valid_login = True
                         else:
-                            st.error("❌ Invalid username or password. If you don't have an account, click 'Create Account' above.")
+                            st.error("❌ Incorrect password. Please try again.")
+                    elif login_username == "admin" and login_password in ("dubber123", "admin123"):
+                        _valid_login = True
+                    else:
+                        st.error("❌ Invalid username or password. If you don't have an account, click 'Create Account' above.")
 
-                        if _valid_login:
-                            complete_user_login(login_username, save_device)
+                    if _valid_login:
+                        complete_user_login(login_username, save_device)
 
         with tab_signup:
             with st.form(key="dubber_signup_form"):
@@ -2375,38 +2374,38 @@ margin-bottom: 1.2rem; text-align: center;">
                 signup_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm", placeholder="Re-enter password").strip()
                 btn_submit_signup = st.form_submit_button("📝 Register Customer Account", type="primary", use_container_width=True)
 
-                if btn_submit_signup:
-                    _fresh_cfg2 = load_saved_config()
-                    auth_users = _fresh_cfg2.get("auth_users", {})
-                    pending_users = _fresh_cfg2.get("pending_users", {})
+            if btn_submit_signup:
+                _fresh_cfg2 = load_saved_config()
+                auth_users = _fresh_cfg2.get("auth_users", {})
+                pending_users = _fresh_cfg2.get("pending_users", {})
 
-                    if not signup_user or not signup_pass:
-                        st.error("Please fill in both username and password.")
-                    elif len(signup_user) < 3:
-                        st.error("Username must be at least 3 characters.")
-                    elif not re.match(r"^[a-zA-Z0-9_\-\.]+$", signup_user):
-                        st.error("Username may only contain letters, numbers, hyphens, and underscores.")
-                    elif len(signup_pass) < 4:
-                        st.error("Password must be at least 4 characters.")
-                    elif signup_pass != signup_confirm:
-                        st.error("Passwords do not match.")
-                    elif signup_user in auth_users or signup_user == "admin":
-                        st.error(f"The username '{signup_user}' is already taken. Please choose another username.")
-                    elif signup_user in pending_users:
-                        st.warning(f"Registration for '{signup_user}' is already pending administrator approval.")
-                        render_contact_admin(key_prefix="reg_already_pending", compact=False)
-                    else:
-                        pending_users[signup_user] = {
-                            "password": signup_pass,
-                            "name": signup_name or signup_user,
-                            "contact": signup_contact or "N/A",
-                            "created_at": time.strftime("%Y-%m-%d %H:%M"),
-                            "status": "pending",
-                        }
-                        save_saved_config({"pending_users": pending_users})
-                        st.success("✅ **Registration Submitted Successfully!**")
-                        st.info("⏳ Your account is now **waiting for administrator approval**. You can contact the admin below to request fast activation:")
-                        render_contact_admin(key_prefix="reg_success", compact=False)
+                if not signup_user or not signup_pass:
+                    st.error("Please fill in both username and password.")
+                elif len(signup_user) < 3:
+                    st.error("Username must be at least 3 characters.")
+                elif not re.match(r"^[a-zA-Z0-9_\-\.]+$", signup_user):
+                    st.error("Username may only contain letters, numbers, hyphens, and underscores.")
+                elif len(signup_pass) < 4:
+                    st.error("Password must be at least 4 characters.")
+                elif signup_pass != signup_confirm:
+                    st.error("Passwords do not match.")
+                elif signup_user in auth_users or signup_user == "admin":
+                    st.error(f"The username '{signup_user}' is already taken. Please choose another username.")
+                elif signup_user in pending_users:
+                    st.warning(f"Registration for '{signup_user}' is already pending administrator approval.")
+                    render_contact_admin(key_prefix="reg_already_pending", compact=False)
+                else:
+                    pending_users[signup_user] = {
+                        "password": signup_pass,
+                        "name": signup_name or signup_user,
+                        "contact": signup_contact or "N/A",
+                        "created_at": time.strftime("%Y-%m-%d %H:%M"),
+                        "status": "pending",
+                    }
+                    save_saved_config({"pending_users": pending_users})
+                    st.success("✅ **Registration Submitted Successfully!**")
+                    st.info("⏳ Your account is now **waiting for administrator approval**. You can contact the admin below to request fast activation:")
+                    render_contact_admin(key_prefix="reg_success", compact=False)
 
         st.markdown("---")
         render_contact_admin(key_prefix="auth_page_footer", compact=False)
