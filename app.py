@@ -3511,360 +3511,98 @@ with tab_batch_folder:
 
         valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
 
-        user_session_folder_key = f"batch_folder_path_{curr_auth_u}"
-        def_pc_path = st.session_state.get(user_session_folder_key) or str(user_batch_in.resolve())
-
-        batch_input_mode = st.radio(
-            "ជ្រើសរើសវិធីសាស្ត្រជ្រើសរើស Folder (Folder Input Method):",
-            [
-                "📁 ជ្រើសរើស Folder លើកុំព្យូទ័រ (Folder Path on Computer / Network / Presets)",
-                "🌐 ជ្រើសរើស Folder តាម Browser (Browser Folder Picker - All Computers & Laptops)",
-            ],
-            horizontal=True,
-            key="batch_input_mode_selector",
+        # 1. Universal Video / Folder Uploader (Works 100% on Phone, Cloud, Mac, Windows)
+        up_batch = st.file_uploader(
+            "🎬 បញ្ចូលវីដេអូ ឬ Folder សម្រាប់ Dubbing (Upload Videos or Folder):",
+            type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
+            accept_multiple_files=True,
+            key="batch_file_uploader_widget",
+            help="អាចអូសទម្លាក់ (Drag & Drop) វីដេអូ ឬ Folder ទាំងមូលចូលទីនេះ ឬចុច Browse files",
         )
 
-        if "Folder Path on Computer" in batch_input_mode:
-            # 1. Native Windows Browse Folder Button & Reset
-            c_browse, c_rst = st.columns([1.6, 1])
-            with c_browse:
-                if st.button("📂 ចុចបើកជ្រើសរើស Folder (Browse Windows Folder)", key="btn_open_win_folder_dialog", type="primary", use_container_width=True):
-                    with st.spinner("កំពុងបើកផ្ទាំងជ្រើសរើស Folder (Folder Browser Dialog)..."):
-                        picked = open_native_folder_picker(def_pc_path)
-                        if picked:
-                            st.session_state[user_session_folder_key] = picked
-                            st.session_state.batch_target_folder = picked
-                            st.session_state.explorer_current_dir = picked
-                            st.toast(f"✅ បានជ្រើសរើស Folder: {picked}", icon="📁")
-                            st.rerun()
-            with c_rst:
-                if st.button("🔄 Folder ដើមរបស់ខ្ញុំ", key="btn_pc_reset_default", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
-                    st.session_state.batch_target_folder = str(user_batch_in.resolve())
-                    st.session_state.explorer_current_dir = str(user_batch_in.resolve())
-                    st.rerun()
+        if up_batch:
+            saved_files = []
+            for uf in up_batch:
+                clean_rel = uf.name.replace("\\", "/").lstrip("/")
+                dest = user_batch_in / Path(clean_rel)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(uf.getvalue())
+                saved_files.append(dest)
+            st.session_state.batch_media_files = saved_files
+            st.session_state.batch_target_folder = str(user_batch_in.resolve())
+            st.success(f"✓ បានបញ្ចូល {len(saved_files)} វីដេអូរួចរាល់ ស្រេចសម្រាប់ Dubbing!")
 
-            # 2. Preset Folder Shortcuts
-            st.markdown("<p style='font-size:0.83rem; color:#94a3b8; margin: 4px 0;'>⚡ ផ្លូវកាត់ Folder ពេញនិយម (Quick Shortcuts):</p>", unsafe_allow_html=True)
-            sc_cols = st.columns(4)
-            with sc_cols[0]:
-                vid_dir = Path.home() / "Videos"
-                if vid_dir.exists() and st.button("🎥 Videos", key="btn_q_vid", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(vid_dir.resolve())
-                    st.session_state.batch_target_folder = str(vid_dir.resolve())
-                    st.session_state.explorer_current_dir = str(vid_dir.resolve())
-                    st.rerun()
-            with sc_cols[1]:
-                down_dir = Path.home() / "Downloads"
-                if down_dir.exists() and st.button("📥 Downloads", key="btn_q_down", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(down_dir.resolve())
-                    st.session_state.batch_target_folder = str(down_dir.resolve())
-                    st.session_state.explorer_current_dir = str(down_dir.resolve())
-                    st.rerun()
-            with sc_cols[2]:
-                desk_dir = Path.home() / "Desktop"
-                if desk_dir.exists() and st.button("🖥️ Desktop", key="btn_q_desk", use_container_width=True):
-                    st.session_state[user_session_folder_key] = str(desk_dir.resolve())
-                    st.session_state.batch_target_folder = str(desk_dir.resolve())
-                    st.session_state.explorer_current_dir = str(desk_dir.resolve())
-                    st.rerun()
-            with sc_cols[3]:
-                d_drive = Path("D:/")
-                if d_drive.exists() and st.button("💾 D: Drive", key="btn_q_d_drive", use_container_width=True):
-                    st.session_state[user_session_folder_key] = "D:/"
-                    st.session_state.batch_target_folder = "D:/"
-                    st.session_state.explorer_current_dir = "D:/"
-                    st.rerun()
-                elif Path("C:/").exists() and st.button("💾 C: Drive", key="btn_q_c_drive", use_container_width=True):
-                    st.session_state[user_session_folder_key] = "C:/"
-                    st.session_state.batch_target_folder = "C:/"
-                    st.session_state.explorer_current_dir = "C:/"
-                    st.rerun()
-
-            # 2B. Hongguo Drama Series Quick Selector
+        # 2. Local Hongguo Drama Quick Selector (Available on Local Windows PC)
+        if sys.platform == "win32":
             hongguo_base = Path.home() / "Videos" / "Hongguo"
             if not hongguo_base.exists():
                 hongguo_base = Path("D:/Tool Download movie chin/Hongguo")
 
             if hongguo_base.exists():
-                drama_list = sorted([d.name for d in hongguo_base.iterdir() if d.is_dir()])
-                if drama_list:
-                    st.markdown("<p style='font-size:0.83rem; color:#38bdf8; margin: 6px 0 2px 0;'>🎬 ជ្រើសរើសរឿងចិនពី Hongguo (Hongguo Drama Series):</p>", unsafe_allow_html=True)
-                    col_hg1, col_hg2 = st.columns([2, 1])
-                    with col_hg1:
-                        sel_drama = st.selectbox("រឿងដែលមានស្រាប់:", ["-- ជ្រើសរើសរឿង --"] + drama_list, key="sel_hongguo_drama", label_visibility="collapsed")
-                    with col_hg2:
-                        if sel_drama != "-- ជ្រើសរើសរឿង --" and st.button("▶️ ជ្រើសរើសរឿងនេះ", key="btn_apply_hongguo_drama", use_container_width=True):
-                            drama_p = hongguo_base / sel_drama
-                            st.session_state[user_session_folder_key] = str(drama_p.resolve())
-                            st.session_state.batch_target_folder = str(drama_p.resolve())
-                            st.session_state.explorer_current_dir = str(drama_p.resolve())
-                            st.toast(f"✅ បានជ្រើសរើសរឿង: {sel_drama}!", icon="🎬")
-                            st.rerun()
+                dramas = sorted([d.name for d in hongguo_base.iterdir() if d.is_dir()])
+                if dramas:
+                    with st.expander("🎬 ជ្រើសរើសរឿងចិនពី Hongguo (Hongguo Drama Series on PC)", expanded=False):
+                        col_hg1, col_hg2 = st.columns([2, 1])
+                        with col_hg1:
+                            sel_drama = st.selectbox("រឿងដែលមានស្រាប់:", ["-- ជ្រើសរើសរឿង --"] + dramas, key="sel_hg_drama")
+                        with col_hg2:
+                            if sel_drama != "-- ជ្រើសរើសរឿង --" and st.button("▶️ យករឿងនេះ", key="btn_apply_hg", use_container_width=True):
+                                dp = hongguo_base / sel_drama
+                                found = sorted([f for f in dp.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+                                if found:
+                                    st.session_state.batch_media_files = found
+                                    st.session_state.batch_target_folder = str(dp.resolve())
+                                    st.toast(f"✅ បានជ្រើសរើសរឿង: {sel_drama} ({len(found)} វីដេអូ)!", icon="🎬")
+                                    st.rerun()
 
-            # 3. Interactive In-Browser Visual Folder Tree Explorer
-            if "explorer_current_dir" not in st.session_state:
-                st.session_state.explorer_current_dir = def_pc_path if (Path(def_pc_path).exists() and Path(def_pc_path).is_dir()) else str(Path.home().resolve())
+        # 3. Check for existing uploaded files
+        existing_in = sorted([f for f in user_batch_in.rglob("*") if f.is_file() and f.suffix.lower() in valid_exts])
+        if not st.session_state.get("batch_media_files") and existing_in:
+            st.session_state.batch_media_files = existing_in
+            st.session_state.batch_target_folder = str(user_batch_in.resolve())
 
-            exp_curr = Path(st.session_state.explorer_current_dir)
-            if not exp_curr.exists() or not exp_curr.is_dir():
-                exp_curr = Path.home()
-                st.session_state.explorer_current_dir = str(exp_curr.resolve())
-
-            with st.expander("🔍 រុករកមើល Folder (Interactive Folder Browser)", expanded=False):
-                st.caption(f"📁 ទីតាំងបច្ចុប្បន្ន: `{exp_curr.resolve()}`")
-                c_up, c_sel = st.columns([1, 1.4])
-                with c_up:
-                    p_up = exp_curr.parent
-                    if p_up and p_up != exp_curr and p_up.exists():
-                        if st.button("⬆️ ឡើងលើ 1 កម្រិត (Up)", key="btn_nav_up", use_container_width=True):
-                            st.session_state.explorer_current_dir = str(p_up.resolve())
-                            st.rerun()
-                with c_sel:
-                    if st.button("🎯 ជ្រើសរើស Folder នេះ", key="btn_nav_sel_curr", type="primary", use_container_width=True):
-                        st.session_state[user_session_folder_key] = str(exp_curr.resolve())
-                        st.session_state.batch_target_folder = str(exp_curr.resolve())
-                        st.toast(f"✅ បានជ្រើសរើស: {exp_curr.name or str(exp_curr.resolve())}", icon="📁")
-                        st.rerun()
-
-                try:
-                    sub_dirs = sorted([d for d in exp_curr.iterdir() if d.is_dir() and not d.name.startswith(".") and not d.name.startswith("$")])
-                    if sub_dirs:
-                        cols_per_row = 2
-                        for chunk_idx in range(0, min(len(sub_dirs), 30), cols_per_row):
-                            c_dirs = st.columns(cols_per_row)
-                            for c_i, d_obj in enumerate(sub_dirs[chunk_idx:chunk_idx+cols_per_row]):
-                                with c_dirs[c_i]:
-                                    try:
-                                        v_cnt = sum(1 for vf in d_obj.iterdir() if vf.is_file() and vf.suffix.lower() in valid_exts)
-                                        v_badge = f" ({v_cnt} 🎬)" if v_cnt > 0 else ""
-                                    except Exception:
-                                        v_badge = ""
-                                    if st.button(f"📁 {d_obj.name}{v_badge}", key=f"f_nav_{d_obj.name}_{chunk_idx}_{c_i}", use_container_width=True):
-                                        st.session_state.explorer_current_dir = str(d_obj.resolve())
-                                        st.rerun()
-                    else:
-                        st.caption("ℹ️ គ្មាន Subfolder នៅក្នុង Folder នេះទេ។")
-                except PermissionError:
-                    st.warning("⚠️ គ្មានសិទ្ធិបើកមើល Folder នេះទេ។")
-                except Exception:
-                    pass
-
-            # 4. Direct Manual Folder Path Input
-            pc_path_input = st.text_input(
-                "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
-                value=def_pc_path,
-                key="pc_path_txt_in",
-                help="បញ្ចូលផ្លូវ Folder ដូចជា D:/Videos ឬ C:/Users/.../Videos ឬ \\\\192.168.1.5\\Shared",
-            )
-            clean_p = pc_path_input.strip().strip('"').strip("'") if pc_path_input else ""
-
-            # Smart path normalizer for client username mismatch (e.g. C:\Users\Adsservicevip\Videos\... on server host)
-            if clean_p and not Path(clean_p).exists() and ("\\Videos\\" in clean_p or "/Videos/" in clean_p):
-                tail_part = re.split(r"[\\/]Videos[\\/]", clean_p, flags=re.IGNORECASE)[-1]
-                mapped_local = Path.home() / "Videos" / tail_part
-                if mapped_local.exists():
-                    clean_p = str(mapped_local.resolve())
-                else:
-                    srv_mapped = BASE_STORAGE_DIR / tail_part
-                    if srv_mapped.exists():
-                        clean_p = str(srv_mapped.resolve())
-
-            st.session_state[user_session_folder_key] = clean_p
-
-            if clean_p:
-                p_obj = Path(clean_p)
-                if p_obj.exists() and p_obj.is_dir():
-                    found_p_files = sorted([f for f in p_obj.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
-                    st.session_state.batch_media_files = found_p_files
-                    st.session_state.batch_target_folder = clean_p
-                    if found_p_files:
-                        st.success(f"✓ បានស្កេនឃើញ {len(found_p_files)} វីដេអូក្នុង Folder `{p_obj.name or clean_p}` ស្រេចសម្រាប់ Dubbing!")
-                    else:
-                        st.info(f"📂 Folder `{p_obj.name or clean_p}` ត្រឹមត្រូវ ប៉ុន្តែមិនទាន់មានឯកសារវីដេអូ (.mp4, .mov, .mkv, ...) ទេ។")
-                else:
-                    st.warning(f"⚠️ រកមិនឃើញ Folder: `{clean_p}` លើ Server ទេ។")
-                    st.markdown(
-                        "<div style='font-size:0.83rem; color:#cbd5e1; margin-bottom:8px;'>"
-                        "💡 ប្រសិនបើអ្នកកំពុងប្រើប្រាស់ពីកុំព្យូទ័រផ្សេង (Client PC/Laptop/Mac/Phone) សូមជ្រើសរើសជម្រើស <b>'🌐 ជ្រើសរើស Folder តាម Browser'</b> ខាងលើដើម្បីជ្រើសរើស Folder ពីកុំព្យូទ័ររបស់អ្នកផ្ទាល់!"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
-                    if st.button("➕ បង្កើត Folder នេះឥឡូវនេះ (Create Folder)", key="btn_make_dir"):
-                        try:
-                            p_obj.mkdir(parents=True, exist_ok=True)
-                            st.success("✓ បានបង្កើត Folder រួចរាល់!")
-                            st.session_state.batch_target_folder = clean_p
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-
-        else:
-            # Mode 2: Browser Folder Picker (Universal for ALL Computers & Laptops)
-            st.markdown(
-                """
-                <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;">
-                    <div style="color: #60a5fa; font-weight: 700; font-size: 0.9rem; margin-bottom: 3px;">
-                        🌐 ជ្រើសរើស Folder ផ្ទាល់ពីកុំព្យូទ័ររបស់អ្នក (Select Folder from ANY Computer)
-                    </div>
-                    <div style="color: #94a3b8; font-size: 0.8rem;">
-                        ដំណើរការលើគ្រប់កុំព្យូទ័រទាំងអស់ (PC, Laptop, Mac, Phone)។ គ្រាន់តែចុច <b>Browse files</b> ដើម្បីជ្រើសរើស Folder វីដេអូ ឬអូសទម្លាក់ (<b>Drag & Drop</b>) Folder ទាំងមូលចូលទីនេះ!
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            c_f_mode, c_f_info = st.columns([1.5, 1])
-            with c_f_mode:
-                is_folder_mode = st.toggle(
-                    "📁 របៀបជ្រើសរើស Folder ទាំងមូល (Folder Mode)",
-                    value=True,
-                    key="batch_folder_mode_toggle",
-                    help="បើកមុខងារនេះដើម្បីឲ្យ Browse files បើកផ្ទាំងរើស Folder ទាំងមូល",
-                )
-            with c_f_info:
-                if is_folder_mode:
-                    st.caption("✨ រើស Folder ទាំងមូលតែ 1 Click")
-                else:
-                    st.caption("📄 រើសឯកសារវីដេអូរាយ")
-
-            st.markdown('<div id="folder-batch-uploader-wrapper"></div>', unsafe_allow_html=True)
-            if is_folder_mode:
-                st.html(
-                    """
-                    <script>
-                    (function() {
-                        function attachFolderPickerAttr() {
-                            const wrapper = document.getElementById("folder-batch-uploader-wrapper");
-                            if (!wrapper) return;
-                            const container = wrapper.closest('[data-testid="stVerticalBlock"]') || wrapper.parentElement;
-                            if (!container) return;
-                            const input = container.querySelector('input[type="file"]');
-                            if (input && !input.hasAttribute('webkitdirectory')) {
-                                input.setAttribute('webkitdirectory', '');
-                                input.setAttribute('directory', '');
-                                input.setAttribute('multiple', '');
-                            }
-                        }
-                        attachFolderPickerAttr();
-                        const observer = new MutationObserver(attachFolderPickerAttr);
-                        observer.observe(document.body, { childList: true, subtree: true });
-                    })();
-                    </script>
-                    """,
-                    unsafe_allow_javascript=True,
-                )
-            else:
-                st.html(
-                    """
-                    <script>
-                    (function() {
-                        const wrapper = document.getElementById("folder-batch-uploader-wrapper");
-                        if (!wrapper) return;
-                        const container = wrapper.closest('[data-testid="stVerticalBlock"]') || wrapper.parentElement;
-                        if (!container) return;
-                        const input = container.querySelector('input[type="file"]');
-                        if (input && input.hasAttribute('webkitdirectory')) {
-                            input.removeAttribute('webkitdirectory');
-                            input.removeAttribute('directory');
-                        }
-                    })();
-                    </script>
-                    """,
-                    unsafe_allow_javascript=True,
-                )
-
-            up_batch = st.file_uploader(
-                "📁 ជ្រើសរើស Folder វីដេអូ ឬឯកសារ (Select Folder or Video Files):",
-                type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
-                accept_multiple_files=True,
-                key="batch_file_uploader_widget",
-                help="អាចចុច Browse files ដើម្បីរើស Folder ទាំងមូល ឬ Drag & Drop Folder ចូលទីនេះ",
-            )
-            if up_batch:
-                saved_files = []
-                for uf in up_batch:
-                    clean_rel = uf.name.replace("\\", "/").lstrip("/")
-                    dest = user_batch_in / Path(clean_rel)
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(uf.getvalue())
-                    saved_files.append(dest)
-                st.session_state.batch_media_files = saved_files
-
-                # Detect if a subfolder was chosen (e.g. 小奶宝驾到)
-                sub_folder_name = ""
-                for sf in saved_files:
-                    try:
-                        if sf.parent != user_batch_in and sf.parent.is_relative_to(user_batch_in):
-                            sub_folder_name = sf.parent.name
-                            st.session_state.batch_target_folder = str(sf.parent.resolve())
-                            st.session_state[user_session_folder_key] = str(sf.parent.resolve())
-                            break
-                    except Exception:
-                        pass
-
-                if not sub_folder_name:
-                    st.session_state.batch_target_folder = str(user_batch_in.resolve())
-                    st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
-                    f_label = "Folder"
-                else:
-                    f_label = f"Folder `{sub_folder_name}`"
-
-                st.success(f"✓ បានបញ្ចូល {len(saved_files)} វីដេអូពី {f_label} រួចរាល់ ស្រេចសម្រាប់ Dubbing!")
-
-            existing_in = sorted([f for f in user_batch_in.rglob("*") if f.is_file() and f.suffix.lower() in valid_exts])
-            if existing_in:
-                col_ex1, col_ex2 = st.columns([1.5, 1])
-                with col_ex1:
-                    st.caption(f"📁 វីដេអូក្នុង Folder ផ្ទុករបស់អ្នក: **{len(existing_in)} files**")
-                with col_ex2:
-                    if st.button("🗑️ សម្អាតចោល (Clear Uploads)", key="btn_clear_uploads", use_container_width=True):
-                        for f in user_batch_in.rglob("*"):
-                            try:
-                                if f.is_file():
-                                    f.unlink()
-                            except Exception:
-                                pass
-                        for d in sorted([p for p in user_batch_in.rglob("*") if p.is_dir()], reverse=True):
-                            try:
-                                d.rmdir()
-                            except Exception:
-                                pass
-                        st.session_state.batch_media_files = []
-                        st.rerun()
-
-                if not st.session_state.get("batch_media_files"):
-                    st.session_state.batch_media_files = existing_in
-                    st.session_state.batch_target_folder = str(user_batch_in.resolve())
-
-        # Active selected files
+        # 4. Active files banner with 1-click Clear
         active_files = [Path(p) for p in st.session_state.get("batch_media_files", []) if Path(p).exists()]
         if active_files:
-            st.markdown(
-                f"""
-                <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; padding: 10px 14px; margin: 10px 0;">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <span style="color: #34d399; font-weight: 700; font-size: 0.92rem;">✓ បានជ្រើសរើស {len(active_files)} វីដេអូសម្រាប់ Dubbing</span>
-                        <span style="font-size: 0.75rem; color: #a7f3d0; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 999px;">Ready</span>
+            col_stat1, col_stat2 = st.columns([2, 1])
+            with col_stat1:
+                st.markdown(
+                    f"""
+                    <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 10px; padding: 10px 14px; margin: 4px 0;">
+                        <span style="color: #34d399; font-weight: 700; font-size: 0.95rem;">✓ ត្រៀមរួចរាល់: {len(active_files)} វីដេអូសម្រាប់ Dubbing</span>
                     </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with col_stat2:
+                if st.button("🗑️ សម្អាតចោល (Clear)", key="btn_clean_batch_files", use_container_width=True):
+                    for f in user_batch_in.rglob("*"):
+                        try:
+                            if f.is_file():
+                                f.unlink()
+                        except Exception:
+                            pass
+                    for d in sorted([p for p in user_batch_in.rglob("*") if p.is_dir()], reverse=True):
+                        try:
+                            d.rmdir()
+                        except Exception:
+                            pass
+                    st.session_state.batch_media_files = []
+                    st.rerun()
+        else:
+            st.info("ℹ️ សូមជ្រើសរើស ឬ Drag & Drop វីដេអូ (.mp4, .mov, .mkv) ចូលប្រអប់ខាងលើ ដើម្បីចាប់ផ្តើម។")
 
-        # Smart Output folder path: inside the selected folder / dubbed_outputs or user_batch_out
+        # 5. Output folder setup
         target_f = st.session_state.get("batch_target_folder", "")
         if target_f and Path(target_f).exists() and Path(target_f).is_dir() and Path(target_f) != Path.cwd():
             def_out = str((Path(target_f) / "dubbed_outputs").resolve())
         else:
             def_out = str(user_batch_out.resolve())
 
-        batch_out_path = st.text_input(
-            "💾 ថតរក្សាទុកលទ្ធផល (Output Folder):",
-            value=def_out,
-            help=f"Rendered videos will be saved here.",
-        )
+        with st.expander("⚙️ ថតរក្សាទុកលទ្ធផល (Advanced Output Path)", expanded=False):
+            batch_out_path = st.text_input("Output Directory:", value=def_out, key="inp_batch_out_dir")
+        if "batch_out_path" not in locals():
+            batch_out_path = def_out
 
         st.markdown("#### ⚙️ 2. កំណត់សំឡេង និងការ Mix (Pipeline Settings)")
         
