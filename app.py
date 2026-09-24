@@ -1626,12 +1626,14 @@ def transcribe_one_folder(
     else:
         raise ValueError("Either folder_path or file_list must be provided.")
 
-    if output_folder:
+    if output_folder and not ("user_storage" in str(output_folder) and file_list and Path(file_list[0]).parent.exists() and "user_storage" not in str(Path(file_list[0]).parent)):
         out_dir = Path(output_folder)
+    elif file_list and len(file_list) > 0 and Path(file_list[0]).parent.exists() and Path(file_list[0]).parent != Path.cwd():
+        out_dir = Path(file_list[0]).parent / "dubbed_outputs"
     elif folder_path:
         out_dir = Path(folder_path) / "dubbed_outputs"
-    elif file_list and len(file_list) > 0 and Path(file_list[0]).parent.exists():
-        out_dir = Path(file_list[0]).parent / "dubbed_outputs"
+    elif output_folder:
+        out_dir = Path(output_folder)
     else:
         out_dir = get_user_storage_dir() / "dubbed_batch_outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -3552,8 +3554,10 @@ with tab_batch_folder:
             st.session_state.batch_media_files = saved_files
             if saved_files and saved_files[0].parent != user_batch_in:
                 st.session_state.batch_target_folder = str(saved_files[0].parent.resolve())
+                st.session_state.inp_batch_out_dir = str((saved_files[0].parent / "dubbed_outputs").resolve())
             else:
                 st.session_state.batch_target_folder = str(user_batch_in.resolve())
+                st.session_state.inp_batch_out_dir = str((user_batch_in / "dubbed_outputs").resolve())
             st.success(f"✓ បានបញ្ចូល {len(saved_files)} វីដេអូរួចរាល់ ស្រេចសម្រាប់ Dubbing!")
 
         # 2. Local Hongguo Drama Quick Selector (Available on Local Windows PC)
@@ -3576,6 +3580,7 @@ with tab_batch_folder:
                                 if found:
                                     st.session_state.batch_media_files = found
                                     st.session_state.batch_target_folder = str(dp.resolve())
+                                    st.session_state.inp_batch_out_dir = str((dp / "dubbed_outputs").resolve())
                                     st.toast(f"✅ បានជ្រើសរើសរឿង: {sel_drama} ({len(found)} វីដេអូ)!", icon="🎬")
                                     st.rerun()
 
@@ -3596,6 +3601,7 @@ with tab_batch_folder:
                         if cf_files:
                             st.session_state.batch_media_files = cf_files
                             st.session_state.batch_target_folder = str(Path(custom_fld_path).resolve())
+                            st.session_state.inp_batch_out_dir = str((Path(custom_fld_path) / "dubbed_outputs").resolve())
                             st.toast(f"✅ បានរកឃើញ {len(cf_files)} វីដេអូ!", icon="🎬")
                             st.rerun()
                         else:
@@ -3641,18 +3647,28 @@ with tab_batch_folder:
             st.info("ℹ️ សូមជ្រើសរើស ឬ Drag & Drop វីដេអូ (.mp4, .mov, .mkv) ចូលប្រអប់ខាងលើ ដើម្បីចាប់ផ្តើម។")
 
         # 6. Output folder setup on file location (Clear & Visible)
-        target_f = st.session_state.get("batch_target_folder", "")
+        active_files = [Path(p) for p in st.session_state.get("batch_media_files", []) if Path(p).exists()]
+        if active_files:
+            target_f = str(active_files[0].parent.resolve())
+            st.session_state.batch_target_folder = target_f
+        else:
+            target_f = st.session_state.get("batch_target_folder", "")
+
         if target_f and Path(target_f).exists() and Path(target_f).is_dir() and Path(target_f) != Path.cwd():
             def_out = str((Path(target_f) / "dubbed_outputs").resolve())
         else:
             def_out = str(user_batch_out.resolve())
+
+        cur_stored = st.session_state.get("inp_batch_out_dir", "")
+        if not cur_stored or (target_f and str(Path(target_f).resolve()) not in cur_stored and ("batch_outputs" in cur_stored or "user_storage" in cur_stored)):
+            st.session_state.inp_batch_out_dir = def_out
 
         st.markdown("##### 📁 ទីតាំងថតរក្សាទុកលទ្ធផល (Output Folder Location)")
         col_out_path, col_out_btn = st.columns([2.5, 1.2])
         with col_out_path:
             batch_out_path = st.text_input(
                 "Output Directory:",
-                value=def_out,
+                value=st.session_state.get("inp_batch_out_dir", def_out),
                 key="inp_batch_out_dir",
                 label_visibility="collapsed",
                 help="វីដេអូនីមួយៗដែល Render រួច (Done one) នឹងត្រូវ Save ចូល Folder នេះភ្លាមៗ។",
@@ -3665,7 +3681,7 @@ with tab_batch_folder:
                     st.toast("✅ បានបើក Folder រួចរាល់!", icon="📂")
                 except Exception as e_open:
                     st.warning(f"មិនអាចបើក Folder បាន: {e_open}")
-        st.caption("💡 ពេលវីដេអូនីមួយៗ Render ចប់ (Done one) វានឹងត្រូវ Save ចូល Folder នេះភ្លាមៗ និង Add បង្ហាញលើអេក្រង់ភ្លាមៗ (Add one)!")
+        st.caption("💡 ពេលចុច Run ប្រព័ន្ធនឹង Auto-Create Folder នេះលើទីតាំងដែលបានជ្រើសរើសភ្លាមៗ ហើយ Render ចប់មួយ Save ចូលមួយ (Done one, save to new folder)!")
         if "batch_out_path" not in locals():
             batch_out_path = def_out
 
@@ -3737,13 +3753,28 @@ with tab_batch_folder:
             if not active_files:
                 st.error("⚠️ មិនទាន់មានវីដេអូសម្រាប់ Dubbing ទេ។ សូម Upload វីដេអូ ឬជ្រើសរើស Folder ជាមុនសិន។")
             else:
-                st.info(f"🚀 កំពុងចាប់ផ្តើមដំណើរការ {len(active_files)} ឯកសារ...")
-                
-                # Make sure output directory is created on file location set immediately
-                try:
-                    Path(batch_out_path).mkdir(parents=True, exist_ok=True)
-                except Exception:
-                    pass
+                # 1. Exact file location user select:
+                if active_files:
+                    selected_location = active_files[0].parent
+                elif st.session_state.get("batch_target_folder"):
+                    selected_location = Path(st.session_state["batch_target_folder"])
+                else:
+                    selected_location = user_batch_in
+
+                # 2. Determine output folder: auto-create on file location user select
+                raw_out = st.session_state.get("inp_batch_out_dir", "").strip() or (batch_out_path.strip() if 'batch_out_path' in locals() and batch_out_path else "")
+                if not raw_out or raw_out == str(user_batch_out.resolve()) or "user_storage" in raw_out:
+                    new_out_dir = selected_location / "dubbed_outputs"
+                else:
+                    new_out_dir = Path(raw_out)
+
+                # 3. AUTO-CREATE FOLDER ON FILE LOCATION USER SELECT:
+                new_out_dir.mkdir(parents=True, exist_ok=True)
+                final_batch_out = str(new_out_dir.resolve())
+                st.session_state.inp_batch_out_dir = final_batch_out
+                batch_out_path = final_batch_out
+
+                st.info(f"🚀 កំពុងចាប់ផ្តើមដំណើរការ {len(active_files)} ឯកសារ... (ថតរក្សាទុក: `{final_batch_out}`)")
 
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
