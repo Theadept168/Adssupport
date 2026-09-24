@@ -317,99 +317,7 @@ def save_customer_review(name: str, role: str, rating: int, review_text: str) ->
 
 
 def render_social_proof_reviews(key_prefix: str = "main", compact: bool = False):
-    reviews = get_customer_reviews()
-    total_reviews = 1480 + len([r for r in reviews if r.get("date") == "ទើបតែបញ្ចូល (Just now)"])
-
-    if compact:
-        stars_html = "★" * 5
-        html = f"""<div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 10px 14px; margin: 8px 0;">
-<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-<span style="font-weight: 700; color: #fbbf24; font-size: 0.88rem;">⭐ 4.9/5.0 Top Rated</span>
-<span style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px;">99.6% Match</span>
-</div>
-<div style="color: #fbbf24; font-size: 0.82rem; margin-bottom: 4px;">{stars_html} <span style="color: #94a3b8; font-size: 0.74rem;">({total_reviews}+ Reviews)</span></div>
-<p style="font-size: 0.76rem; color: #cbd5e1; margin: 0; line-height: 1.4;">"ឧបករណ៍បកប្រែ និងបញ្ចូលសម្លេងវីដេអូលឿន និងច្បាស់បំផុតនៅកម្ពុជា!"</p>
-</div>"""
-        st.markdown(html, unsafe_allow_html=True)
-        return
-
-    summary_html = f"""<div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 16px; padding: 16px 20px; margin: 12px 0;">
-<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.15); padding-bottom: 12px;">
-<div style="display: flex; align-items: center; gap: 12px;">
-<div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 12px; padding: 8px 14px; text-align: center;">
-<div style="font-size: 1.5rem; font-weight: 800; color: #fbbf24; line-height: 1;">4.9</div>
-<div style="color: #fbbf24; font-size: 0.7rem; margin-top: 3px;">★★★★★</div>
-</div>
-<div>
-<div style="font-size: 1.05rem; font-weight: 700; color: #f8fafc;">🌟 ការវាយតម្លៃ & សំឡេងគាំទ្រពីអតិថិជន</div>
-<div style="font-size: 0.82rem; color: #94a3b8;">ផ្អែកលើការវាយតម្លៃពី <b style="color: #38bdf8;">{total_reviews:,}+</b> Creators, អាជីវកម្ម & Editors</div>
-</div>
-</div>
-<div style="display: flex; gap: 8px;">
-<div style="background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 8px; padding: 5px 10px; font-size: 0.76rem; color: #4ade80; font-weight: 600;">
-👍 99.6% ណែនាំឱ្យប្រើ
-</div>
-<div style="background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 5px 10px; font-size: 0.76rem; color: #38bdf8; font-weight: 600;">
-🚀 50K+ Videos Dubbed
-</div>
-</div>
-</div>
-<div style="display: flex; flex-direction: column; gap: 10px;">"""
-
-    cards_html = []
-    for r in reviews[:6]:
-        stars = "★" * int(r.get("rating", 5))
-        name = escape(str(r.get("name", "User")))
-        role = escape(str(r.get("role", "Creator")))
-        date = escape(str(r.get("date", "Recently")))
-        rev_txt = escape(str(r.get("review", "")))
-        avatar = escape(str(r.get("avatar", "⭐")))
-        card = f"""<div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 12px; padding: 12px 14px;">
-<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-<div style="display: flex; align-items: center; gap: 10px;">
-<div style="width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, #1e293b, #334155); border: 1px solid rgba(245, 158, 11, 0.4); display: flex; align-items: center; justify-content: center; font-size: 1.05rem;">{avatar}</div>
-<div>
-<div style="font-size: 0.88rem; font-weight: 700; color: #f1f5f9; display: flex; align-items: center; gap: 5px;">
-{name}
-<span style="font-size: 0.65rem; background: rgba(34, 197, 94, 0.18); color: #4ade80; padding: 1px 5px; border-radius: 4px; font-weight: 600;">✓ Verified</span>
-</div>
-<div style="font-size: 0.74rem; color: #94a3b8;">{role}</div>
-</div>
-</div>
-<div style="text-align: right;">
-<div style="color: #fbbf24; font-size: 0.8rem; letter-spacing: 1px;">{stars}</div>
-<div style="font-size: 0.68rem; color: #64748b;">{date}</div>
-</div>
-</div>
-<p style="font-size: 0.82rem; color: #cbd5e1; margin: 4px 0 0 0; line-height: 1.5; font-style: italic;">"{rev_txt}"</p>
-</div>"""
-        cards_html.append(card)
-
-    end_html = """</div>
-</div>"""
-
-    full_reviews_html = summary_html + "\n".join(cards_html) + end_html
-    st.markdown(full_reviews_html, unsafe_allow_html=True)
-
-    with st.expander("✍️ សរសេរការវាយតម្លៃរបស់អ្នក (Leave a Review)", expanded=False):
-        with st.form(key=f"form_submit_review_{key_prefix}"):
-            r_col1, r_col2 = st.columns(2)
-            with r_col1:
-                rev_user = st.text_input("ឈ្មោះ / ឈ្មោះក្រុម (Name / Brand)", value=st.session_state.get("auth_user", ""), placeholder="e.g. Seyha Creator", key=f"rev_name_{key_prefix}").strip()
-            with r_col2:
-                rev_role = st.text_input("តួនាទី (Role / Profession)", placeholder="e.g. Video Editor, TikToker", key=f"rev_role_{key_prefix}").strip()
-            
-            rev_stars = st.select_slider("កម្រិតផ្កាយ (Rating Stars)", options=[1, 2, 3, 4, 5], value=5, format_func=lambda x: "★" * x + f" ({x}/5)", key=f"rev_stars_{key_prefix}")
-            rev_feedback = st.text_area("មតិយោបល់របស់អ្នក (Your Review / Feedback)", placeholder="សរសេរបទពិសោធន៍នៃការប្រើប្រាស់កម្មវិធី Dubber AI...", key=f"rev_text_{key_prefix}").strip()
-            
-            btn_rev = st.form_submit_button("⭐ ដាក់ស្នើការវាយតម្លៃ (Submit Review)", type="primary", use_container_width=True)
-            if btn_rev:
-                if not rev_feedback:
-                    st.error("សូមបញ្ចូលមតិយោបល់របស់អ្នកជាមុនសិន។")
-                else:
-                    save_customer_review(rev_user, rev_role, rev_stars, rev_feedback)
-                    st.success("🎉 អរគុណច្រើនសម្រាប់ការវាយតម្លៃរបស់អ្នក! មតិរបស់អ្នកត្រូវបានបង្ហាញភ្លាមៗ។")
-                    st.rerun()
+    return
 
 
 def get_client_device_info() -> dict:
@@ -2369,7 +2277,6 @@ Dubber AI <span style="background: linear-gradient(135deg, #38bdf8 0%, #34d399 1
 </div>""",
             unsafe_allow_html=True,
         )
-        render_social_proof_reviews(key_prefix="auth_showcase", compact=False)
 
     with col_auth:
         # Show session-lock warning if kicked out by another device
@@ -2937,7 +2844,6 @@ with st.sidebar:
     orig_vol_pref = max(sb_bg_music_vol, sb_orig_voice_vol) if (sb_enable_bg_music or sb_enable_orig_voice) else 0.0
     st.caption("Engine: FFmpeg (bundled) • Edge Neural TTS • Whisper • Gemini")
     st.markdown("---")
-    render_social_proof_reviews(key_prefix="sidebar_reviews", compact=True)
     render_contact_admin(key_prefix="sidebar_support", compact=True)
 
 # ==========================================
