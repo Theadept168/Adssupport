@@ -63,6 +63,15 @@ def load_saved_config() -> dict:
         config["pending_users"] = {}
     if "device_tokens" not in config:
         config["device_tokens"] = {}
+    if "admin_contact" not in config:
+        config["admin_contact"] = {
+            "telegram": "@Theadept168",
+            "phone": "+855 12 345 678",
+            "email": "admin@dubberai.com",
+            "note": "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។",
+        }
+    if "admin_messages" not in config:
+        config["admin_messages"] = []
     try:
         if hasattr(st, "secrets") and st.secrets:
             if "GEMINI_API_KEY" in st.secrets:
@@ -95,6 +104,120 @@ def save_saved_config(updates: dict) -> None:
         CONFIG_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
+
+
+def get_admin_contact_info() -> dict:
+    cfg = load_saved_config()
+    return cfg.get("admin_contact", {
+        "telegram": "@Theadept168",
+        "phone": "+855 12 345 678",
+        "email": "admin@dubberai.com",
+        "note": "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។",
+    })
+
+
+def save_admin_contact_info(info_dict: dict) -> None:
+    save_saved_config({"admin_contact": info_dict})
+
+
+def send_message_to_admin(sender: str, contact: str, message: str) -> bool:
+    if not message.strip():
+        return False
+    cfg = load_saved_config()
+    msgs = cfg.get("admin_messages", [])
+    new_msg = {
+        "id": secrets.token_hex(4),
+        "sender": sender.strip() or "Anonymous Customer",
+        "contact": contact.strip() or "N/A",
+        "message": message.strip(),
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "unread",
+    }
+    msgs.append(new_msg)
+    save_saved_config({"admin_messages": msgs})
+    return True
+
+
+def render_contact_admin(key_prefix: str = "main", compact: bool = False):
+    contact_info = get_admin_contact_info()
+    tg = str(contact_info.get("telegram", "")).strip()
+    phone = str(contact_info.get("phone", "")).strip()
+    email = str(contact_info.get("email", "")).strip()
+    note = str(contact_info.get("note", "")).strip()
+
+    tg_clean = tg.lstrip("@")
+    tg_url = f"https://t.me/{tg_clean}" if tg_clean and not tg_clean.startswith("http") else tg
+    phone_clean = re.sub(r"[^\d+]", "", phone)
+
+    if compact:
+        st.markdown(
+            f"""
+            <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 10px 14px; margin: 8px 0;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                    <span style="font-weight: 700; color: #38bdf8; font-size: 0.88rem;">💬 Contact Admin</span>
+                    <span style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px;">Support</span>
+                </div>
+                {f'<p style="font-size: 0.76rem; color: #94a3b8; margin: 0 0 8px 0;">{escape(note)}</p>' if note else ''}
+                <div style="display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem;">
+                    {f'<div>✈️ Telegram: <a href="{escape(tg_url)}" target="_blank" style="color: #38bdf8; font-weight: 600; text-decoration: none;">{escape(tg)}</a></div>' if tg else ''}
+                    {f'<div>📞 Phone: <a href="tel:{escape(phone_clean)}" style="color: #34d399; font-weight: 600; text-decoration: none;">{escape(phone)}</a></div>' if phone else ''}
+                    {f'<div>✉️ Email: <a href="mailto:{escape(email)}" style="color: #cbd5e1; text-decoration: none;">{escape(email)}</a></div>' if email else ''}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"""
+            <div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 14px; padding: 16px 18px; margin: 12px 0;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <div style="font-size: 1.02rem; font-weight: 700; color: #38bdf8;">💬 ទាក់ទងទៅកាន់ Admin (Contact Administrator)</div>
+                    <span style="background: rgba(56, 189, 248, 0.18); color: #38bdf8; font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;">Official Support</span>
+                </div>
+                <p style="font-size: 0.84rem; color: #cbd5e1; margin: 0 0 12px 0;">
+                    {escape(note) if note else "សម្រាប់សាកសួរព័ត៌មានបន្ថែម ស្នើសុំបើកគណនី ឬរាយការណ៍បញ្ហា សូមទាក់ទងមកកាន់ Admin តាមមធ្យោបាយខាងក្រោម៖"}
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
+                    {f'''
+                    <a href="{escape(tg_url)}" target="_blank" style="text-decoration: none;">
+                        <div style="background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 10px; padding: 10px 14px; text-align: center; color: #38bdf8; font-weight: 700; font-size: 0.90rem;">
+                            ✈️ Telegram: {escape(tg)}
+                        </div>
+                    </a>
+                    ''' if tg else ''}
+                    {f'''
+                    <a href="tel:{escape(phone_clean)}" style="text-decoration: none;">
+                        <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; padding: 10px 14px; text-align: center; color: #34d399; font-weight: 700; font-size: 0.90rem;">
+                            📞 Phone: {escape(phone)}
+                        </div>
+                    </a>
+                    ''' if phone else ''}
+                    {f'''
+                    <a href="mailto:{escape(email)}" style="text-decoration: none;">
+                        <div style="background: rgba(249, 115, 22, 0.12); border: 1px solid rgba(249, 115, 22, 0.3); border-radius: 10px; padding: 10px 14px; text-align: center; color: #fb923c; font-weight: 700; font-size: 0.90rem;">
+                            ✉️ Email: {escape(email)}
+                        </div>
+                    </a>
+                    ''' if email else ''}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("✉️ ផ្ញើសារផ្ទាល់ទៅ Admin (Send In-App Message)", expanded=False):
+        with st.form(key=f"form_contact_admin_{key_prefix}"):
+            msg_sender = st.text_input("Your Name / Username", value=st.session_state.get("auth_user", ""), placeholder="Enter your name", key=f"inp_msg_sender_{key_prefix}").strip()
+            msg_contact = st.text_input("Your Contact (Phone / Telegram / Email)", placeholder="e.g. @telegram or 012 345 678", key=f"inp_msg_contact_{key_prefix}").strip()
+            msg_body = st.text_area("Message / Question (សាររបស់អ្នក)", placeholder="Describe your question or request to Admin...", key=f"inp_msg_body_{key_prefix}").strip()
+            btn_send = st.form_submit_button("📤 ផ្ញើសារទៅ Admin", type="primary", use_container_width=True)
+            if btn_send:
+                if not msg_body:
+                    st.error("Please enter a message.")
+                else:
+                    send_message_to_admin(msg_sender, msg_contact, msg_body)
+                    st.success("✅ សាររបស់អ្នកត្រូវបានផ្ញើទៅ Admin រួចរាល់ហើយ! Admin នឹងពិនិត្យមើលក្នុងពេលឆាប់ៗ។")
 
 
 def get_client_device_info() -> dict:
@@ -2054,6 +2177,7 @@ if not st.session_state.authenticated:
 
                         if login_username in pending_users:
                             st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
+                            render_contact_admin(key_prefix="login_pending", compact=False)
                         elif login_username in auth_users:
                             expected_pw = get_user_password(auth_users[login_username])
                             if login_password == expected_pw:
@@ -2094,6 +2218,7 @@ if not st.session_state.authenticated:
                         st.error(f"The username '{signup_user}' is already taken. Please choose another username.")
                     elif signup_user in pending_users:
                         st.warning(f"Registration for '{signup_user}' is already pending administrator approval.")
+                        render_contact_admin(key_prefix="reg_already_pending", compact=False)
                     else:
                         pending_users[signup_user] = {
                             "password": signup_pass,
@@ -2104,7 +2229,11 @@ if not st.session_state.authenticated:
                         }
                         save_saved_config({"pending_users": pending_users})
                         st.success("✅ **Registration Submitted Successfully!**")
-                        st.info("⏳ Your account is now **waiting for administrator approval**. Once approved, you will be able to sign in.")
+                        st.info("⏳ Your account is now **waiting for administrator approval**. You can contact the admin below to request fast activation:")
+                        render_contact_admin(key_prefix="reg_success", compact=False)
+
+        st.markdown("---")
+        render_contact_admin(key_prefix="auth_page_footer", compact=False)
     st.stop()
 
 # ==========================================
@@ -2520,6 +2649,8 @@ with st.sidebar:
 
     orig_vol_pref = max(sb_bg_music_vol, sb_orig_voice_vol) if (sb_enable_bg_music or sb_enable_orig_voice) else 0.0
     st.caption("Engine: FFmpeg (bundled) • Edge Neural TTS • Whisper • Gemini")
+    st.markdown("---")
+    render_contact_admin(key_prefix="sidebar_support", compact=True)
 
 # ==========================================
 # Main Studio Tabs
@@ -2527,9 +2658,17 @@ with st.sidebar:
 is_admin_user = st.session_state.get("auth_user", "") == "admin"
 pending_dict = saved_config.get("pending_users", {})
 num_pending = len(pending_dict)
+admin_msgs = saved_config.get("admin_messages", [])
+num_unread_msgs = sum(1 for m in admin_msgs if m.get("status") == "unread")
 
 if is_admin_user:
-    cust_tab_title = f"06 👥 Customers ({num_pending})" if num_pending > 0 else "06 👥 Customers"
+    badges = []
+    if num_pending > 0:
+        badges.append(f"{num_pending} pending")
+    if num_unread_msgs > 0:
+        badges.append(f"{num_unread_msgs} ✉️")
+    badge_str = f" ({', '.join(badges)})" if badges else ""
+    cust_tab_title = f"06 👥 Customers{badge_str}"
     tab_transcribe, tab_batch_folder, tab_translate, tab_editor_voice, tab_video, tab_customers = st.tabs([
         "01 🎙️ Transcribe",
         "02 📁 Folder Auto-Dub",
@@ -4354,3 +4493,93 @@ if is_admin_user and tab_customers is not None:
                 use_container_width=True,
                 key="tab5_download_csv",
             )
+
+        # ------------------------------------
+        # ADMIN CONTACT SETTINGS & SUPPORT INBOX
+        # ------------------------------------
+        st.markdown("---")
+        st.markdown("#### ⚙️ កំណត់ព័ត៌មានទំនាក់ទំនង Admin (Admin Contact Settings)")
+        st.markdown("<p style='font-size:0.84rem; color:#94a3b8;'>ព័ត៌មាននេះនឹងត្រូវបង្ហាញនៅលើទំព័រ Login/Register និងផ្ទាំងជំនួយសម្រាប់អតិថិជនទាក់ទងមកកាន់ Admin។</p>", unsafe_allow_html=True)
+
+        curr_contact = get_admin_contact_info()
+        col_adm_c1, col_adm_c2 = st.columns(2)
+        with col_adm_c1:
+            inp_tg = st.text_input("✈️ Telegram Username / Link", value=curr_contact.get("telegram", "@Theadept168"), help="e.g. @Theadept168 or https://t.me/Theadept168", key="admin_edit_tg")
+            inp_phone = st.text_input("📞 Phone / WhatsApp Number", value=curr_contact.get("phone", "+855 12 345 678"), help="e.g. +855 12 345 678", key="admin_edit_phone")
+        with col_adm_c2:
+            inp_email = st.text_input("✉️ Email Address", value=curr_contact.get("email", "admin@dubberai.com"), help="e.g. admin@dubberai.com", key="admin_edit_email")
+            inp_note = st.text_input("📝 Support Note (Khmer)", value=curr_contact.get("note", "ទាក់ទងមកកាន់ Admin តាម Telegram ឬទូរស័ព្ទ ដើម្បីស្នើសុំបើកគណនី ឬសាកសួរព័ត៌មានបន្ថែម។"), key="admin_edit_note")
+
+        if st.button("💾 Save Admin Contact Settings", key="btn_save_admin_contact", use_container_width=True):
+            save_admin_contact_info({
+                "telegram": inp_tg.strip(),
+                "phone": inp_phone.strip(),
+                "email": inp_email.strip(),
+                "note": inp_note.strip(),
+            })
+            st.toast("✅ បានរក្សាទុកព័ត៌មានទំនាក់ទំនង Admin រួចរាល់!", icon="🎉")
+            st.rerun()
+
+        # Customer Messages Inbox
+        st.markdown("---")
+        _fresh_cfg_msg = load_saved_config()
+        all_msgs = _fresh_cfg_msg.get("admin_messages", [])
+        unread_count = sum(1 for m in all_msgs if m.get("status") == "unread")
+        inbox_title = f"#### 📬 ប្រអប់សារពីអតិថិជន (Customer Inquiries) ({unread_count} New)" if unread_count > 0 else "#### 📬 ប្រអប់សារពីអតិថិជន (Customer Inquiries)"
+        st.markdown(inbox_title)
+
+        if all_msgs:
+            col_inbox_h1, col_inbox_h2 = st.columns([3, 1])
+            with col_inbox_h2:
+                if st.button("🗑️ Clear Read Messages", key="btn_clear_read_msgs", help="Remove all read inquiries"):
+                    remaining = [m for m in all_msgs if m.get("status") == "unread"]
+                    save_saved_config({"admin_messages": remaining})
+                    st.toast("Cleared read messages.")
+                    st.rerun()
+
+            for idx, msg in enumerate(reversed(all_msgs)):
+                m_id = msg.get("id", str(idx))
+                is_unr = msg.get("status") == "unread"
+                border_col = "rgba(56, 189, 248, 0.45)" if is_unr else "rgba(255, 255, 255, 0.08)"
+                bg_col = "rgba(56, 189, 248, 0.08)" if is_unr else "rgba(30, 41, 59, 0.6)"
+                badge_html = '<span style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 999px;">NEW</span>' if is_unr else '<span style="color: #64748b; font-size: 0.72rem;">Read</span>'
+
+                st.markdown(
+                    f"""
+                    <div style="background: {bg_col}; border: 1px solid {border_col}; border-radius: 12px; padding: 12px 14px; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <div>
+                                <span style="font-weight: 700; color: #f8fafc; font-size: 0.95rem;">👤 {escape(msg.get('sender', 'Customer'))}</span>
+                                <span style="color: #94a3b8; font-size: 0.8rem; margin-left: 8px;">📞 {escape(msg.get('contact', 'N/A'))}</span>
+                            </div>
+                            <div>
+                                {badge_html}
+                                <span style="font-size: 0.74rem; color: #64748b; margin-left: 8px;">🕒 {escape(msg.get('created_at', ''))}</span>
+                            </div>
+                        </div>
+                        <div style="font-size: 0.88rem; color: #e2e8f0; background: rgba(15, 23, 42, 0.5); border-radius: 8px; padding: 8px 10px; margin-top: 4px; white-space: pre-wrap;">
+                            {escape(msg.get('message', ''))}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                col_m_act1, col_m_act2, col_m_sp = st.columns([1, 1, 3])
+                with col_m_act1:
+                    if is_unr:
+                        if st.button("✓ Mark as Read", key=f"mark_read_{m_id}_{idx}", use_container_width=True):
+                            for m in all_msgs:
+                                if m.get("id") == m_id:
+                                    m["status"] = "read"
+                                    break
+                            save_saved_config({"admin_messages": all_msgs})
+                            st.rerun()
+                with col_m_act2:
+                    if st.button("🗑️ Delete", key=f"del_msg_{m_id}_{idx}", use_container_width=True):
+                        all_msgs = [m for m in all_msgs if m.get("id") != m_id]
+                        save_saved_config({"admin_messages": all_msgs})
+                        st.toast("Message deleted.")
+                        st.rerun()
+        else:
+            st.info("✅ មិនទាន់មានសារពីអតិថិជននៅឡើយទេ។ (No customer messages yet)")
