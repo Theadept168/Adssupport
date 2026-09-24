@@ -1536,9 +1536,21 @@ def render_video_preview(video_path: str):
         st.video(str(p.resolve()), format="video/mp4")
 
 
-# ==========================================
-# Automated Batch Pipeline: Transcribe One Folder
-# ==========================================
+def pick_folder_dialog(initial_dir: str = None) -> str:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        init = initial_dir if initial_dir and Path(initial_dir).is_dir() else str(Path.home())
+        selected = filedialog.askdirectory(initialdir=init, title="ជ្រើសរើស Folder វីដេអូ (Select Video Folder)")
+        root.destroy()
+        return selected or ""
+    except Exception:
+        return ""
+
+
 def transcribe_one_folder(
     folder_path: str | Path = None,
     output_folder: str | Path = None,
@@ -3444,21 +3456,16 @@ with tab_batch_folder:
     batch_col1, batch_col2 = st.columns([1.1, 1], gap="medium")
 
     with batch_col1:
-        client_dev = get_client_device_info()
-        is_client_mobile = any(k in client_dev.get("device", "") for k in ["Phone", "Android", "iPhone", "iPad"])
-        source_options = ["📁 Local Folder Path (Computer)", "📤 Multi-File Upload (Phone / Browser)"]
-        def_source_idx = 1 if is_client_mobile else 0
+        st.markdown("#### 📂 1. ជ្រើសរើសវីដេអូសម្រាប់ Dubbing (Select Media)")
 
-        source_mode = st.radio(
-            "Source Mode",
-            source_options,
-            index=def_source_idx,
-            horizontal=True,
-            label_visibility="collapsed",
-        )
+        tab_mode_upload, tab_mode_pc = st.tabs([
+            "📤 ជ្រើសរើសឯកសារ ឬទម្លាក់វីដេអូ (Upload / Drag & Drop) ★ ងាយបំផុត",
+            "💻 ជ្រើសរើស Folder លើកុំព្យូទ័រ (Local Computer Folder)",
+        ])
 
         folder_media_files = []
         target_folder_path = ""
+        source_mode = "upload"
 
         curr_auth_u = st.session_state.get("auth_user", "guest")
         user_storage = get_user_storage_dir(curr_auth_u)
@@ -3467,95 +3474,112 @@ with tab_batch_folder:
         user_batch_in.mkdir(parents=True, exist_ok=True)
         user_batch_out.mkdir(parents=True, exist_ok=True)
 
-        if source_mode == "📁 Local Folder Path (Computer)":
+        with tab_mode_upload:
+            st.markdown(
+                """
+                <div style="background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px;">
+                    <div style="font-weight: 700; color: #38bdf8; font-size: 0.9rem;">✨ វិធីងាយស្រួលបំផុតសម្រាប់គ្រប់ឧបករណ៍ (ទូរស័ព្ទដៃ & កុំព្យូទ័រ)</div>
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 2px;">
+                        ចុចជ្រើសរើសវីដេអូជាច្រើន (5, 10, 20 files) ឬទម្លាក់ Folder ទាំងមូលចូលក្នុងប្រអប់ខាងក្រោម៖
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            uploaded_batch_files = st.file_uploader(
+                "ជ្រើសរើសវីដេអូច្រើនក្នុងពេលតែមួយ (Select Multiple Videos):",
+                type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
+                accept_multiple_files=True,
+                help="គាំទ្រការជ្រើសរើសវីដេអូ ឬទម្លាក់ចូលជាបាច់ពី Gallery ទូរស័ព្ទ ឬ Computer",
+                key="tab_batch_multi_uploader",
+            )
+            if uploaded_batch_files:
+                source_mode = "upload"
+                for up_f in uploaded_batch_files:
+                    up_p = user_batch_in / up_f.name
+                    up_p.write_bytes(up_f.getvalue())
+                    folder_media_files.append(up_p)
+                st.success(f"✓ បានបញ្ចូល {len(folder_media_files)} វីដេអូរួចរាល់! អាចកំណត់សំឡេង និងចុច Start ខាងក្រោមបានភ្លាម។")
+                target_folder_path = str(user_batch_in.resolve())
+            else:
+                existing_in_files = sorted([f for f in user_batch_in.iterdir() if f.is_file() and f.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a"}])
+                if existing_in_files and not uploaded_batch_files:
+                    st.caption(f"💡 មាន {len(existing_in_files)} ឯកសារដែលធ្លាប់បានបញ្ចូលពីមុនក្នុង Folder របស់អ្នក។")
+                    if st.button(f"🔄 ប្រើប្រាស់ {len(existing_in_files)} វីដេអូដែលធ្លាប់បញ្ចូលពីមុន (Use Previous Files)", key="btn_use_prev_batch"):
+                        folder_media_files = existing_in_files
+                        target_folder_path = str(user_batch_in.resolve())
+                        source_mode = "upload"
+
+        with tab_mode_pc:
+            st.caption("ប្រើសម្រាប់ជ្រើសរើស Folder ដែលមានស្រាប់លើកុំព្យូទ័រ (PC) ដោយមិនបាច់ Upload ឡើងវិញ។")
             user_session_folder_key = f"batch_folder_path_{curr_auth_u}"
             saved_f = st.session_state.get(user_session_folder_key, "")
             if saved_f and Path(saved_f.strip().strip('"').strip("'")).is_dir():
-                def_path = saved_f.strip().strip('"').strip("'")
+                def_pc_path = saved_f.strip().strip('"').strip("'")
             else:
-                def_path = str(user_batch_in.resolve())
+                def_pc_path = str(user_batch_in.resolve())
 
-            target_folder_path = st.text_input(
-                "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
-                value=def_path,
-                help=f"Folder សម្រាប់ផ្ទុកវិដេអូរបស់គណនី {curr_auth_u}. Default: {user_batch_in.resolve()}",
-            )
-            clean_target_path = target_folder_path.strip().strip('"').strip("'") if target_folder_path else ""
-            st.session_state[user_session_folder_key] = clean_target_path
-
-            # Quick folder shortcuts
-            q_cols = st.columns([1.2, 1, 1])
-            with q_cols[0]:
-                if st.button(f"📂 Folder របស់ខ្ញុំ ({curr_auth_u})", key="btn_quick_user_in", use_container_width=True):
+            # Big Browse Folder button that opens native Windows Explorer folder dialog
+            c_browse, c_reset = st.columns([1.5, 1])
+            with c_browse:
+                if st.button("📂 ចុចបើកជ្រើសរើស Folder លើ PC (Browse Folder)", key="btn_open_win_folder_dialog", type="primary", use_container_width=True):
+                    picked = pick_folder_dialog(def_pc_path)
+                    if picked:
+                        st.session_state[user_session_folder_key] = picked
+                        st.rerun()
+            with c_reset:
+                if st.button("🔄 ត្រឡប់ទៅ Folder ដើម", key="btn_pc_reset_default", use_container_width=True):
                     st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
                     st.rerun()
-            with q_cols[1]:
+
+            # Preset shortcuts
+            pc_shortcuts = st.columns(3)
+            with pc_shortcuts[0]:
                 vid_folder = Path.home() / "Videos"
-                if vid_folder.exists():
-                    if st.button("🎥 Videos PC", key="btn_quick_vid", use_container_width=True):
-                        st.session_state[user_session_folder_key] = str(vid_folder.resolve())
-                        st.rerun()
-            with q_cols[2]:
+                if vid_folder.exists() and st.button("🎥 Videos Folder", key="btn_sc_videos", use_container_width=True):
+                    st.session_state[user_session_folder_key] = str(vid_folder.resolve())
+                    st.rerun()
+            with pc_shortcuts[1]:
                 down_folder = Path.home() / "Downloads"
-                if down_folder.exists():
-                    if st.button("📥 Downloads", key="btn_quick_down", use_container_width=True):
-                        st.session_state[user_session_folder_key] = str(down_folder.resolve())
-                        st.rerun()
+                if down_folder.exists() and st.button("📥 Downloads", key="btn_sc_downloads", use_container_width=True):
+                    st.session_state[user_session_folder_key] = str(down_folder.resolve())
+                    st.rerun()
+            with pc_shortcuts[2]:
+                desk_folder = Path.home() / "Desktop"
+                if desk_folder.exists() and st.button("🖥️ Desktop", key="btn_sc_desktop", use_container_width=True):
+                    st.session_state[user_session_folder_key] = str(desk_folder.resolve())
+                    st.rerun()
 
-            if clean_target_path:
-                p_in = Path(clean_target_path)
-                if not p_in.exists():
-                    st.warning(f"⚠️ Folder មិនទាន់មាន ឬរកមិនឃើញទេ:\n`{clean_target_path}`")
-                    c_btn1, c_btn2 = st.columns(2)
-                    with c_btn1:
-                        if st.button("➕ បង្កើត Folder នេះភ្លាមៗ (Create Folder)", key="btn_create_missing_folder", use_container_width=True):
-                            try:
-                                p_in.mkdir(parents=True, exist_ok=True)
-                                st.success("✓ បានបង្កើត Folder រួចរាល់!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"មិនអាចបង្កើតបានទេ: {e}")
-                    with c_btn2:
-                        if st.button("🔄 ត្រឡប់ទៅ Folder ដើមរបស់ខ្ញុំ (Reset)", key="btn_reset_to_default_folder", use_container_width=True):
-                            st.session_state[user_session_folder_key] = str(user_batch_in.resolve())
-                            st.rerun()
-                elif not p_in.is_dir():
-                    st.error("⚠️ ផ្លូវដែលបានបញ្ចូលជា File មិនមែនជា Folder ទេ។ សូមបញ្ចូល Folder Path។")
-                else:
-                    valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
-                    folder_media_files = sorted([f for f in p_in.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
-                    vid_count = sum(1 for f in folder_media_files if f.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v"})
-                    aud_count = len(folder_media_files) - vid_count
-
-                    if folder_media_files:
-                        st.markdown(
-                            f"""
-                            <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px; padding: 9px 12px; margin: 4px 0 10px 0;">
-                                <span style="color: #34d399; font-weight: 700; font-size: 0.9rem;">✓ បានរកឃើញឯកសារសរុប {len(folder_media_files)} files:</span>
-                                <span style="color: #94a3b8; font-size: 0.8rem; margin-left: 6px;">({vid_count} វិដេអូ / {aud_count} សម្លេង)</span>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.info(f"📂 Folder ត្រឹមត្រូវ ({p_in.name}) ប៉ុន្តែមិនទាន់មានឯកសារវីដេអូ ឬសម្លេងទេ។\n\n👉 សូម copy វីដេអូចូល Folder នេះ ឬជ្រើសរើស **'📤 Multi-File Upload'** ខាងលើដើម្បី Upload ពីទូរស័ព្ទ/Browser!")
-        else:
-            uploaded_batch_files = st.file_uploader(
-                "ជ្រើសរើសឯកសារជាច្រើនពីទូរស័ព្ទ ឬកុំព្យូទ័រ (Select Multiple Media Files):",
-                type=["mp4", "mov", "mkv", "webm", "avi", "flv", "wmv", "mp3", "wav", "m4a"],
-                accept_multiple_files=True,
-                help="Support batch upload from phone gallery or files",
+            target_folder_path_pc = st.text_input(
+                "📁 ទីតាំង Folder លើកុំព្យូទ័រ (Folder Path):",
+                value=def_pc_path,
+                key="pc_folder_text_input",
+                help="ផ្លូវ Folder លើកុំព្យូទ័រដែលមានផ្ទុកវីដេអូ",
             )
-            if uploaded_batch_files:
-                batch_upload_dir = user_batch_in
-                batch_upload_dir.mkdir(parents=True, exist_ok=True)
-                folder_media_files = []
-                for up_f in uploaded_batch_files:
-                    up_p = batch_upload_dir / up_f.name
-                    up_p.write_bytes(up_f.getvalue())
-                    folder_media_files.append(up_p)
-                st.success(f"✓ បានបញ្ចូល {len(folder_media_files)} ឯកសាររួចរាល់សម្រាប់ដំណើរការ!")
-                target_folder_path = str(batch_upload_dir.resolve())
+            clean_pc_path = target_folder_path_pc.strip().strip('"').strip("'") if target_folder_path_pc else ""
+            st.session_state[user_session_folder_key] = clean_pc_path
+
+            if clean_pc_path and not folder_media_files:
+                p_pc = Path(clean_pc_path)
+                if p_pc.exists() and p_pc.is_dir():
+                    valid_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".m4v", ".mp3", ".wav", ".m4a", ".aac"}
+                    pc_found_files = sorted([f for f in p_pc.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+                    if pc_found_files:
+                        folder_media_files = pc_found_files
+                        target_folder_path = clean_pc_path
+                        source_mode = "folder"
+                        st.success(f"✓ បានរកឃើញ {len(folder_media_files)} វីដេអូក្នុង Folder `{p_pc.name}`!")
+                    else:
+                        st.info(f"📂 Folder `{p_pc.name}` រួចរាល់ ប៉ុន្តែមិនទាន់មានឯកសារវីដេអូទេ។ សូម copy វីដេអូចូល ឬប្រើប្រាស់ផ្ទាំង Upload ខាងលើ!")
+                else:
+                    st.warning(f"⚠️ រកមិនឃើញ Folder: `{clean_pc_path}`")
+                    if st.button("➕ បង្កើត Folder នេះឥឡូវនេះ (Create Folder)", key="btn_create_pc_missing"):
+                        try:
+                            p_pc.mkdir(parents=True, exist_ok=True)
+                            st.success("✓ បានបង្កើត Folder រួចរាល់!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"មិនអាចបង្កើតបានទេ: {e}")
 
         # Output folder path strictly isolated for current user
         def_out = str(user_batch_out.resolve())
