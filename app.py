@@ -934,9 +934,9 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
         pass
 
     upload_file_path = media_path
+    temp_clean_files = []
     if is_vid:
-        safe_stem = re.sub(r"[^a-zA-Z0-9_\-]", "_", media_path.stem)
-        audio_extract_path = user_storage / f"temp_transcribe_{safe_stem}_{secrets.token_hex(4)}.mp3"
+        audio_extract_path = user_storage / f"temp_audio_{secrets.token_hex(8)}.mp3"
         cmd = [
             FFMPEG_BIN, "-y", "-i", str(media_path),
             "-vn", "-acodec", "libmp3lame", "-b:a", "64k", "-ar", "16000",
@@ -946,26 +946,40 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             if audio_extract_path.exists() and audio_extract_path.stat().st_size > 0:
                 upload_file_path = audio_extract_path
+                temp_clean_files.append(audio_extract_path)
         except Exception:
             upload_file_path = media_path
 
-    if not api_key:
-        _cfg = load_saved_config()
-        if model_name.startswith("openai"):
-            api_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
-        elif model_name.startswith("gemini"):
-            api_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+    # If upload_file_path still contains non-ASCII characters (e.g. Chinese, Khmer, accented characters),
+    # create a temporary clean ASCII copy so Google GenAI / httpx header never crashes with 'ascii' codec can't encode
+    if any(ord(c) > 127 for c in upload_file_path.name) or " " in upload_file_path.name:
+        import shutil
+        safe_ascii_copy = user_storage / f"safe_upload_{secrets.token_hex(8)}{upload_file_path.suffix.lower()}"
+        try:
+            shutil.copy2(upload_file_path, safe_ascii_copy)
+            upload_file_path = safe_ascii_copy
+            temp_clean_files.append(safe_ascii_copy)
+        except Exception:
+            pass
 
-    if model_name == "openai-gpt-4o-mini-transcribe":
-        return transcribe_with_openai(upload_file_path, api_key)
-
-    if model_name.startswith("gemini-"):
+    try:
         if not api_key:
-            raise ValueError("Enter a Gemini API key in the sidebar for Gemini transcription.")
-        from google import genai
+            _cfg = load_saved_config()
+            if model_name.startswith("openai"):
+                api_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+            elif model_name.startswith("gemini"):
+                api_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
 
-        client = genai.Client(api_key=api_key)
-        media = client.files.upload(file=str(upload_file_path))
+        if model_name == "openai-gpt-4o-mini-transcribe":
+            return transcribe_with_openai(upload_file_path, api_key)
+
+        if model_name.startswith("gemini-"):
+            if not api_key:
+                raise ValueError("Enter a Gemini API key in the sidebar for Gemini transcription.")
+            from google import genai
+
+            client = genai.Client(api_key=api_key)
+            media = client.files.upload(file=str(upload_file_path))
 
         # Wait for file processing if needed
         max_wait = 15
@@ -1054,14 +1068,22 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
             raise ValueError("No speech segments detected in media.")
         return render_srt(subtitles)
 
-    model = get_whisper_model(model_name)
-    result = model.transcribe(str(upload_file_path), fp16=False)
-    subtitles = [
-        Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
-        for index, segment in enumerate(result["segments"], 1)
-        if segment["text"].strip()
-    ]
-    return render_srt(subtitles)
+        model = get_whisper_model(model_name)
+        result = model.transcribe(str(upload_file_path), fp16=False)
+        subtitles = [
+            Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
+            for index, segment in enumerate(result["segments"], 1)
+            if segment["text"].strip()
+        ]
+        return render_srt(subtitles)
+
+    finally:
+        for tmp_c in temp_clean_files:
+            try:
+                if tmp_c.exists():
+                    tmp_c.unlink()
+            except Exception:
+                pass
 
 
 # ==========================================
@@ -1570,8 +1592,10 @@ def transcribe_one_folder(
             if not src_subs:
                 raise ValueError("No speech segments detected in media.")
 
+            clean_stem = re.sub(r"_dubbed(_[a-f0-9]+)?$", "", f_stem)
+
             if not save_only_video:
-                src_srt_path = out_dir / f"{f_stem}_source.srt"
+                src_srt_path = out_dir / f"{clean_stem}_source.srt"
                 src_srt_path.write_text(source_srt_content, encoding="utf-8")
                 item_result["source_srt"] = str(src_srt_path.resolve())
 
@@ -1587,11 +1611,11 @@ def transcribe_one_folder(
             khmer_srt_content = render_srt(khmer_subs)
 
             if not save_only_video:
-                khmer_srt_path = out_dir / f"{f_stem}_khmer.srt"
+                khmer_srt_path = out_dir / f"{clean_stem}_khmer.srt"
                 khmer_srt_path.write_text(khmer_srt_content, encoding="utf-8")
                 item_result["khmer_srt"] = str(khmer_srt_path.resolve())
             else:
-                khmer_srt_path = temp_work_dir / f"tmp_{f_stem}_{secrets.token_hex(4)}_khmer.srt"
+                khmer_srt_path = temp_work_dir / f"tmp_srt_{secrets.token_hex(8)}_khmer.srt"
                 khmer_srt_path.write_text(khmer_srt_content, encoding="utf-8")
                 temp_cleanup_files.append(khmer_srt_path)
 
@@ -1607,9 +1631,9 @@ def transcribe_one_folder(
                     subtitle_voices = {}
 
             if not save_only_video or not is_vid:
-                dubbed_audio_path = out_dir / (f"{f_stem}_dubbed.mp3" if not is_vid else f"{f_stem}_dubbed_audio.wav")
+                dubbed_audio_path = out_dir / (f"{clean_stem}_dubbed.mp3" if not is_vid else f"{clean_stem}_dubbed_audio.wav")
             else:
-                dubbed_audio_path = temp_work_dir / f"tmp_{f_stem}_{secrets.token_hex(4)}_audio.wav"
+                dubbed_audio_path = temp_work_dir / f"tmp_audio_{secrets.token_hex(8)}_audio.wav"
                 temp_cleanup_files.append(dubbed_audio_path)
 
             synthesize_full_audio(
@@ -1628,7 +1652,9 @@ def transcribe_one_folder(
             # 4. Auto Render Dubbed Video
             if is_vid:
                 report("🎬 Step 4/4: Auto-rendering dubbed video with FFmpeg...")
-                rendered_video_path = out_dir / f"{f_stem}_dubbed.mp4"
+                rendered_video_path = out_dir / f"{clean_stem}_dubbed.mp4"
+                if rendered_video_path.resolve() == media_file.resolve():
+                    rendered_video_path = out_dir / f"{clean_stem}_dubbed_{secrets.token_hex(3)}.mp4"
                 process_video_dubbing(
                     video_path=str(media_file.resolve()),
                     audio_path=str(dubbed_audio_path.resolve()),
