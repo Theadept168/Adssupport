@@ -60,13 +60,30 @@ AudioSegment.converter = FFMPEG_BIN
 AudioSegment.ffmpeg = FFMPEG_BIN
 
 
+DEFAULT_USERS_PATH = Path("default_users.json")
+
+
 def load_saved_config() -> dict:
     config = {}
-    if CONFIG_PATH.exists():
+    # First load permanent git-backed users and tokens
+    if DEFAULT_USERS_PATH.exists():
         try:
-            config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            config = json.loads(DEFAULT_USERS_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             config = {}
+
+    # Then overlay any dynamic runtime changes from .dubber_config.json
+    if CONFIG_PATH.exists():
+        try:
+            runtime_cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            for k, v in runtime_cfg.items():
+                if isinstance(v, dict) and isinstance(config.get(k), dict):
+                    config[k].update(v)
+                else:
+                    config[k] = v
+        except (OSError, json.JSONDecodeError):
+            pass
+
     if "auth_users" not in config:
         config["auth_users"] = {"admin": {"password": "dubber123", "role": "admin", "status": "approved"}}
     if "pending_users" not in config:
@@ -116,6 +133,16 @@ def save_saved_config(updates: dict) -> None:
         CONFIG_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
+    if "auth_users" in updates or "device_tokens" in updates:
+        try:
+            backup_data = {
+                "auth_users": current.get("auth_users", {}),
+                "device_tokens": current.get("device_tokens", {}),
+                "admin_contact": current.get("admin_contact", {})
+            }
+            DEFAULT_USERS_PATH.write_text(json.dumps(backup_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
 
 def get_admin_contact_info() -> dict:
