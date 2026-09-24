@@ -1,3 +1,5 @@
+# Dubber AI Pro Studio - Dependencies
+# Build: 2026-09-24-v2
 streamlit>=1.37
 openai-whisper
 google-genai
