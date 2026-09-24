@@ -3659,16 +3659,16 @@ with tab_batch_folder:
         else:
             def_out = str(user_batch_out.resolve())
 
-        cur_stored = st.session_state.get("inp_batch_out_dir", "")
-        if not cur_stored or (target_f and str(Path(target_f).resolve()) not in cur_stored and ("batch_outputs" in cur_stored or "user_storage" in cur_stored)):
-            st.session_state.inp_batch_out_dir = def_out
+        if "inp_batch_out_dir" not in st.session_state or not st.session_state["inp_batch_out_dir"]:
+            st.session_state["inp_batch_out_dir"] = def_out
+        elif target_f and str(Path(target_f).resolve()) not in st.session_state["inp_batch_out_dir"] and ("batch_outputs" in st.session_state["inp_batch_out_dir"] or "user_storage" in st.session_state["inp_batch_out_dir"]):
+            st.session_state["inp_batch_out_dir"] = def_out
 
         st.markdown("##### 📁 ទីតាំងថតរក្សាទុកលទ្ធផល (Output Folder Location)")
         col_out_path, col_out_btn = st.columns([2.5, 1.2])
         with col_out_path:
             batch_out_path = st.text_input(
                 "Output Directory:",
-                value=st.session_state.get("inp_batch_out_dir", def_out),
                 key="inp_batch_out_dir",
                 label_visibility="collapsed",
                 help="វីដេអូនីមួយៗដែល Render រួច (Done one) នឹងត្រូវ Save ចូល Folder នេះភ្លាមៗ។",
@@ -3771,8 +3771,8 @@ with tab_batch_folder:
                 # 3. AUTO-CREATE FOLDER ON FILE LOCATION USER SELECT:
                 new_out_dir.mkdir(parents=True, exist_ok=True)
                 final_batch_out = str(new_out_dir.resolve())
-                st.session_state.inp_batch_out_dir = final_batch_out
                 batch_out_path = final_batch_out
+                st.session_state["batch_current_out_dir"] = final_batch_out
 
                 st.info(f"🚀 កំពុងចាប់ផ្តើមដំណើរការ {len(active_files)} ឯកសារ... (ថតរក្សាទុក: `{final_batch_out}`)")
 
