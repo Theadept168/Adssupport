@@ -159,6 +159,17 @@ def load_saved_config() -> dict:
         if def_u not in config["auth_users"]:
             config["auth_users"][def_u] = def_val
 
+    # Auto-approve any pending users so no customer is ever stuck waiting
+    if config.get("pending_users"):
+        for pu, p_info in list(config["pending_users"].items()):
+            if pu not in config["auth_users"]:
+                if isinstance(p_info, dict):
+                    p_info["status"] = "approved"
+                    p_info["role"] = p_info.get("role", "user")
+                    p_info["approved_at"] = time.strftime("%Y-%m-%d %H:%M")
+                    config["auth_users"][pu] = p_info
+        config["pending_users"] = {}
+
     # 3. Streamlit secrets overrides if provided
     try:
         if hasattr(st, "secrets") and st.secrets:
@@ -2296,12 +2307,15 @@ if "session_lock_alert" not in st.session_state:
     st.session_state.session_lock_alert = ""
 
 def generate_permanent_device_token(username: str, password: str) -> str:
-    import hashlib
-    sig = hashlib.sha256(f"{username.strip()}:{password}:dubber_studio_perm_2026".encode("utf-8")).hexdigest()[:24]
-    return f"{username.strip()}.{sig}"
+    import hashlib, base64
+    u_clean = username.strip()
+    raw_cred = f"{u_clean}:{password}".encode("utf-8")
+    b64_cred = base64.urlsafe_b64encode(raw_cred).decode("utf-8").rstrip("=")
+    sig = hashlib.sha256(f"{b64_cred}:dubber_studio_perm_2026".encode("utf-8")).hexdigest()[:24]
+    return f"{b64_cred}.{sig}"
 
 
-# Auto-Login with Saved Device Token (Survives 100% of Server Reboots & Redeploys)
+# Auto-Login with Saved Device Token (Survives 100% of Server Reboots & Redeploys, Self-Heals New Users)
 if not st.session_state.authenticated:
     device_token = st.query_params.get("device", "")
     if device_token:
@@ -2312,16 +2326,48 @@ if not st.session_state.authenticated:
         matched_user = None
         matched_dev_name = "Saved Device"
 
-        # 1. Stateless Signed Token Verification (Never lost on reboot!)
+        # 1. Self-Healing Signed Token Verification (Restores account & logs in across any reboot!)
         if "." in device_token:
+            import hashlib, base64
             parts = device_token.split(".", 1)
-            cand_user = parts[0]
-            for au, a_info in auth_users.items():
-                if au.strip().lower() == cand_user.strip().lower():
-                    expected_tok = generate_permanent_device_token(au, get_user_password(a_info))
-                    if device_token == expected_tok:
-                        matched_user = au
-                        break
+            prefix, sig = parts[0], parts[1]
+
+            # Format A: Self-healing base64(user:pass).sig
+            expected_sig_a = hashlib.sha256(f"{prefix}:dubber_studio_perm_2026".encode("utf-8")).hexdigest()[:24]
+            if sig == expected_sig_a:
+                try:
+                    pad = "=" * ((4 - len(prefix) % 4) % 4)
+                    decoded = base64.urlsafe_b64decode((prefix + pad).encode("utf-8")).decode("utf-8")
+                    if ":" in decoded:
+                        t_user, t_pass = decoded.split(":", 1)
+                        found_u = None
+                        for au in auth_users:
+                            if au.strip().lower() == t_user.strip().lower():
+                                found_u = au
+                                break
+                        if not found_u:
+                            auth_users[t_user] = {
+                                "password": t_pass,
+                                "name": t_user,
+                                "role": "user",
+                                "status": "approved",
+                                "approved_at": time.strftime("%Y-%m-%d %H:%M"),
+                            }
+                            save_saved_config({"auth_users": auth_users})
+                            found_u = t_user
+                        matched_user = found_u
+                except Exception:
+                    pass
+
+            # Format B: Legacy user.sig
+            if not matched_user:
+                for au, a_info in auth_users.items():
+                    if au.strip().lower() == prefix.strip().lower():
+                        pw = get_user_password(a_info)
+                        legacy_sig = hashlib.sha256(f"{au.strip()}:{pw}:dubber_studio_perm_2026".encode("utf-8")).hexdigest()[:24]
+                        if sig == legacy_sig:
+                            matched_user = au
+                            break
 
         # 2. Fallback: Check saved_tokens dictionary
         if not matched_user and device_token in saved_tokens:
@@ -2480,25 +2526,33 @@ margin-bottom: 1.2rem; text-align: center;">
                     _valid_login = False
                     target_user = None
 
-                    # 1. Check pending (case-insensitive)
-                    for pu in pending_users:
-                        if pu.strip().lower() == login_username.lower():
-                            st.warning("⏳ **Account Pending Approval**: Your registration has been submitted and is currently awaiting administrator review. Please check back soon.")
-                            render_contact_admin(key_prefix="login_pending", compact=False)
-                            target_user = pu
+                    # 1. Check approved users (case-insensitive)
+                    for au, a_info in auth_users.items():
+                        if au.strip().lower() == login_username.lower():
+                            expected_pw = get_user_password(a_info)
+                            if login_password == expected_pw:
+                                _valid_login = True
+                                target_user = au
+                            else:
+                                st.error("❌ Incorrect password. Please try again.")
+                                target_user = au
                             break
 
-                    # 2. Check approved users (case-insensitive)
+                    # 2. Check pending (auto-approve on login if password matches!)
                     if not target_user:
-                        for au, a_info in auth_users.items():
-                            if au.strip().lower() == login_username.lower():
-                                expected_pw = get_user_password(a_info)
+                        for pu, p_info in pending_users.items():
+                            if pu.strip().lower() == login_username.lower():
+                                expected_pw = get_user_password(p_info)
                                 if login_password == expected_pw:
+                                    if isinstance(p_info, dict):
+                                        p_info["status"] = "approved"
+                                        p_info["role"] = "user"
+                                        auth_users[pu] = p_info
+                                    else:
+                                        auth_users[pu] = {"password": expected_pw, "role": "user", "status": "approved"}
+                                    save_saved_config({"auth_users": auth_users, "pending_users": {}})
                                     _valid_login = True
-                                    target_user = au
-                                else:
-                                    st.error("❌ Incorrect password. Please try again.")
-                                    target_user = au
+                                    target_user = pu
                                 break
 
                     # 3. Admin fallback
@@ -2514,46 +2568,42 @@ margin-bottom: 1.2rem; text-align: center;">
 
         with tab_signup:
             with st.form(key="dubber_signup_form"):
-                st.markdown("<p style='font-size:0.86rem; color:#94a3b8; margin-bottom:0.8rem;'>Submit your details below. New customer accounts are reviewed and activated by the administrator.</p>", unsafe_allow_html=True)
-                signup_user = st.text_input("Desired Username", key="reg_user", placeholder="e.g. video_editor99").strip()
+                st.markdown("<p style='font-size:0.86rem; color:#34d399; margin-bottom:0.8rem;'>✨ បង្កើតគណនីថ្មី និងចូលប្រើប្រាស់ភ្លាមៗដោយស្វ័យប្រវត្តិ (Instant Auto-Approve)!</p>", unsafe_allow_html=True)
+                signup_user = st.text_input("Username (ឈ្មោះគណនី)", key="reg_user", placeholder="e.g. video_editor99 or phone number").strip()
                 signup_name = st.text_input("Full Name or Note (Optional)", key="reg_name", placeholder="e.g. Video Editor / Studio Name").strip()
                 signup_contact = st.text_input("Phone Number / Telegram / Email (Optional)", key="reg_contact", placeholder="e.g. 012 345 678 or @telegram").strip()
-                signup_pass = st.text_input("Password", type="password", key="reg_pass", placeholder="Minimum 4 characters").strip()
-                signup_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm", placeholder="Re-enter password").strip()
-                btn_submit_signup = st.form_submit_button("📝 Register Customer Account", type="primary", use_container_width=True)
+                signup_pass = st.text_input("Password (លេខសម្ងាត់)", type="password", key="reg_pass", placeholder="Minimum 4 characters").strip()
+                signup_confirm = st.text_input("Confirm Password (បញ្ជាក់លេខសម្ងាត់)", type="password", key="reg_confirm", placeholder="Re-enter password").strip()
+                btn_submit_signup = st.form_submit_button("🚀 បង្កើតគណនី & ចូលប្រើភ្លាមៗ (Register & Auto-Approve)", type="primary", use_container_width=True)
 
             if btn_submit_signup:
                 _fresh_cfg2 = load_saved_config()
                 auth_users = _fresh_cfg2.get("auth_users", {})
-                pending_users = _fresh_cfg2.get("pending_users", {})
 
                 if not signup_user or not signup_pass:
-                    st.error("Please fill in both username and password.")
-                elif len(signup_user) < 3:
-                    st.error("Username must be at least 3 characters.")
-                elif not re.match(r"^[a-zA-Z0-9_\-\.]+$", signup_user):
-                    st.error("Username may only contain letters, numbers, hyphens, and underscores.")
+                    st.error("សូមបំពេញទាំង Username និង Password។ (Please fill in both username and password.)")
+                elif len(signup_user) < 2:
+                    st.error("Username ត្រូវមានយ៉ាងតិច 2 តួអក្សរ។")
                 elif len(signup_pass) < 4:
-                    st.error("Password must be at least 4 characters.")
+                    st.error("Password ត្រូវមានយ៉ាងតិច 4 តួអក្សរ។")
                 elif signup_pass != signup_confirm:
-                    st.error("Passwords do not match.")
-                elif signup_user in auth_users or signup_user == "admin":
-                    st.error(f"The username '{signup_user}' is already taken. Please choose another username.")
-                elif signup_user in pending_users:
-                    st.warning(f"Registration for '{signup_user}' is already pending administrator approval.")
-                    render_contact_admin(key_prefix="reg_already_pending", compact=False)
+                    st.error("Password ទាំងពីរមិនដូចគ្នាទេ។ (Passwords do not match.)")
+                elif any(au.strip().lower() == signup_user.lower() for au in auth_users) or signup_user.lower() == "admin":
+                    st.error(f"ឈ្មោះគណនី '{signup_user}' មានរួចហើយ។ សូមជ្រើសរើសឈ្មោះផ្សេង ឬចូលទៅកាន់ផ្ទាំង Sign In។")
                 else:
-                    pending_users[signup_user] = {
+                    # AUTO-APPROVE & AUTO-LOGIN IMMEDIATELY
+                    auth_users[signup_user] = {
                         "password": signup_pass,
                         "name": signup_name or signup_user,
                         "contact": signup_contact or "N/A",
+                        "role": "user",
+                        "status": "approved",
                         "created_at": time.strftime("%Y-%m-%d %H:%M"),
-                        "status": "pending",
+                        "approved_at": time.strftime("%Y-%m-%d %H:%M"),
                     }
-                    save_saved_config({"pending_users": pending_users})
-                    st.success("✅ **Registration Submitted Successfully!**")
-                    st.info("⏳ Your account is now **waiting for administrator approval**. You can contact the admin below to request fast activation:")
-                    render_contact_admin(key_prefix="reg_success", compact=False)
+                    save_saved_config({"auth_users": auth_users, "pending_users": {}})
+                    st.success(f"🎉 គណនី '{signup_user}' ត្រូវបានបង្កើត និងអនុម័តដោយស្វ័យប្រវត្តិ (Auto-Approved)! កំពុងចូលប្រើប្រាស់...")
+                    complete_user_login(signup_user, remember=True)
 
         st.markdown("---")
         render_contact_admin(key_prefix="auth_page_footer", compact=False)
