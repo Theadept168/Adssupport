@@ -1,0 +1,10 @@
+.git
+__pycache__
+*.pyc
+*.exe
+*.log
+*.vbs
+*.bat
+*.ps1
+.dubber_input
+dubbed_outputs
