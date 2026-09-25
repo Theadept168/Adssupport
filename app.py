@@ -2295,37 +2295,59 @@ if "session_token" not in st.session_state:
 if "session_lock_alert" not in st.session_state:
     st.session_state.session_lock_alert = ""
 
-# Auto-Login with Saved Device Token
+def generate_permanent_device_token(username: str, password: str) -> str:
+    import hashlib
+    sig = hashlib.sha256(f"{username.strip()}:{password}:dubber_studio_perm_2026".encode("utf-8")).hexdigest()[:24]
+    return f"{username.strip()}.{sig}"
+
+
+# Auto-Login with Saved Device Token (Survives 100% of Server Reboots & Redeploys)
 if not st.session_state.authenticated:
     device_token = st.query_params.get("device", "")
-    saved_tokens = saved_config.get("device_tokens", {})
-    if device_token and device_token in saved_tokens:
-        tok_data = saved_tokens[device_token]
-        tok_user = tok_data.get("user", "")
+    if device_token:
         _cfg_check = load_saved_config()
         auth_users = _cfg_check.get("auth_users", {})
-        if tok_user in auth_users or tok_user == "admin":
-            # Validate that this saved device token's session_token still matches the active one
-            _tok_session = tok_data.get("session_token", "")
-            _live_session = auth_users.get(tok_user, {}).get("active_session_token", "") if isinstance(auth_users.get(tok_user), dict) else ""
-            if _tok_session and _tok_session == _live_session:
-                st.session_state.authenticated = True
-                st.session_state.auth_user = tok_user
-                st.session_state.session_token = _tok_session
-                st.session_state.current_device = tok_data.get("device_name", "Saved Device")
-            else:
-                # Session was taken over by another device — clear stale token
-                st.query_params.clear()
+        saved_tokens = _cfg_check.get("device_tokens", {})
+
+        matched_user = None
+        matched_dev_name = "Saved Device"
+
+        # 1. Stateless Signed Token Verification (Never lost on reboot!)
+        if "." in device_token:
+            parts = device_token.split(".", 1)
+            cand_user = parts[0]
+            for au, a_info in auth_users.items():
+                if au.strip().lower() == cand_user.strip().lower():
+                    expected_tok = generate_permanent_device_token(au, get_user_password(a_info))
+                    if device_token == expected_tok:
+                        matched_user = au
+                        break
+
+        # 2. Fallback: Check saved_tokens dictionary
+        if not matched_user and device_token in saved_tokens:
+            tok_data = saved_tokens[device_token]
+            tok_user = tok_data.get("user", "")
+            for au in auth_users:
+                if au.strip().lower() == tok_user.strip().lower():
+                    matched_user = au
+                    matched_dev_name = tok_data.get("device_name", "Saved Device")
+                    break
+
+        if matched_user:
+            st.session_state.authenticated = True
+            st.session_state.auth_user = matched_user
+            st.session_state.current_device = matched_dev_name
 
 
 def complete_user_login(username: str, remember: bool):
     dev_info = get_client_device_info()
-    # Generate a unique session token to enforce single active session
     new_session_token = secrets.token_hex(24)
 
     _cfg = load_saved_config()
     auth_users = _cfg.get("auth_users", {})
+    user_pw = "dubber123"
     if username in auth_users:
+        user_pw = get_user_password(auth_users[username])
         if isinstance(auth_users[username], dict):
             auth_users[username]["last_device"] = dev_info
             auth_users[username]["last_login"] = time.strftime("%Y-%m-%d %H:%M")
@@ -2354,15 +2376,15 @@ def complete_user_login(username: str, remember: bool):
 
     updates = {"auth_users": auth_users}
     if remember:
-        token = secrets.token_hex(16)
+        perm_token = generate_permanent_device_token(username, user_pw)
         dev_tokens = _cfg.get("device_tokens", {})
-        dev_tokens[token] = {
+        dev_tokens[perm_token] = {
             "user": username,
             "session_token": new_session_token,
             **dev_info
         }
         updates["device_tokens"] = dev_tokens
-        st.query_params["device"] = token
+        st.query_params["device"] = perm_token
 
     save_saved_config(updates)
     st.session_state.authenticated = True
@@ -2538,26 +2560,18 @@ margin-bottom: 1.2rem; text-align: center;">
     st.stop()
 
 # ==========================================
-# Single-Session Verification Gate
+# Persistent Session & Reboot Recovery Gate
 # ==========================================
 _gate_user = st.session_state.get("auth_user", "")
-_gate_token = st.session_state.get("session_token", "")
-if _gate_user and _gate_token:
-    _gate_cfg = load_saved_config()
-    _gate_users = _gate_cfg.get("auth_users", {})
-    _live_token = _gate_users.get(_gate_user, {}).get("active_session_token", "") if isinstance(_gate_users.get(_gate_user), dict) else ""
-    if _live_token and _live_token != _gate_token:
-        # Another device logged in and took over this account
-        st.session_state.authenticated = False
-        st.session_state.auth_user = ""
-        st.session_state.session_token = ""
-        st.session_state.current_device = ""
-        st.session_state.session_lock_alert = (
-            "⚠️ គណនីនេះត្រូវបានចូលប្រើ (Login) នៅលើឧបករណ៍ផ្សេងទៀតរួចហើយ!\n"
-            "មួយគណនីអាចប្រើប្រាស់បានតែ ១ ឧបករណ៍ប៉ុណ្ណោះ មិនអាចប្រើដំណាលគ្នាបានទេ។"
-        )
-        st.query_params.clear()
-        st.rerun()
+if _gate_user and not st.query_params.get("device"):
+    try:
+        _gate_cfg = load_saved_config()
+        _gate_users = _gate_cfg.get("auth_users", {})
+        if _gate_user in _gate_users:
+            _pw = get_user_password(_gate_users[_gate_user])
+            st.query_params["device"] = generate_permanent_device_token(_gate_user, _pw)
+    except Exception:
+        pass
 
 # ==========================================
 # Authenticated App Banner
@@ -2706,6 +2720,9 @@ with st.sidebar:
     if not curr_dev:
         curr_dev = get_client_device_info().get('device_name', 'Current Device')
 
+    _sb_all_users = load_saved_config().get("auth_users", {})
+    _total_u_count = len(_sb_all_users)
+
     st.markdown(
         f"""
         <div style="background: rgba(30, 41, 59, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; padding: 11px 14px; margin-bottom: 0.8rem;">
@@ -2713,7 +2730,8 @@ with st.sidebar:
                 <div style="font-size: 0.95rem; font-weight: 700; color: #34d399;">👤 {escape(curr_u)}</div>
                 <span style="background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(16, 185, 129, 0.3);">SAVED DEVICE</span>
             </div>
-            <div style="font-size: 0.76rem; color: #94a3b8;">📱 {escape(curr_dev)}</div>
+            <div style="font-size: 0.76rem; color: #94a3b8; margin-bottom: 4px;">📱 {escape(curr_dev)}</div>
+            <div style="font-size: 0.76rem; color: #38bdf8; font-weight: 600;">👥 គណនីសរុបក្នុងប្រព័ន្ធ: {_total_u_count} Users</div>
         </div>
         """,
         unsafe_allow_html=True,

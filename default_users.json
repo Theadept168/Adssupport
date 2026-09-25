@@ -10,7 +10,6 @@
         "login_time": "2026-09-24 03:50"
       },
       "last_login": "2026-09-24 03:50",
-      "active_session_token": "ecc3fc80957814270791f14c40e24750bd3914e9a9356538",
       "active_device_name": "Windows PC • Chrome"
     },
     "Thea": {
@@ -25,7 +24,6 @@
         "login_time": "2026-09-24 02:06"
       },
       "last_login": "2026-09-24 02:06",
-      "active_session_token": "d71ecbffaf1d7b7bf5a9ca66d04341111ecc9b6115668b31",
       "active_device_name": "iPhone (iOS) • Safari"
     },
     "mingling": {
@@ -40,7 +38,6 @@
         "login_time": "2026-09-24 03:50"
       },
       "last_login": "2026-09-24 03:50",
-      "active_session_token": "122c360730a4d3def3bb58804dbb233a710cf373a115e7f3",
       "active_device_name": "Windows PC • Chrome"
     },
     "Lypey": {
@@ -55,7 +52,6 @@
         "login_time": "2026-09-24 04:37"
       },
       "last_login": "2026-09-24 04:37",
-      "active_session_token": "192c13bb0c4df8db6be713c5b270e481ebc31d994d77fe03",
       "active_device_name": "Windows PC • Chrome"
     },
     "0979994612": {
@@ -77,7 +73,6 @@
         "login_time": "2026-09-24 04:38"
       },
       "last_login": "2026-09-24 04:38",
-      "active_session_token": "71c9d9d314fa7fffec4bf569661187f6cd0c3da8a2acbebb",
       "active_device_name": "Windows PC • Chrome"
     }
   },
@@ -204,6 +199,30 @@
       "device_name": "Windows PC • Chrome",
       "ip": "119.13.57.51",
       "login_time": "2026-09-24 04:38"
+    },
+    "admin.392ed139ba2fc76f620ea9af": {
+      "user": "admin",
+      "device_name": "Saved Device"
+    },
+    "Thea.fd3087583ce3e526275fec29": {
+      "user": "Thea",
+      "device_name": "Saved Device"
+    },
+    "mingling.54c178058940c3d6b7a6569f": {
+      "user": "mingling",
+      "device_name": "Saved Device"
+    },
+    "Lypey.5424be2272c1fc0980302204": {
+      "user": "Lypey",
+      "device_name": "Saved Device"
+    },
+    "0979994612.71761ca4dc9e4bbad796e64f": {
+      "user": "0979994612",
+      "device_name": "Saved Device"
+    },
+    "tii12345.cd35eca6bd62aa7d2c0c35aa": {
+      "user": "tii12345",
+      "device_name": "Saved Device"
     }
   },
   "admin_contact": {
