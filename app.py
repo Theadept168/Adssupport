@@ -1592,6 +1592,135 @@ def render_video_preview(video_path: str):
         st.video(str(p.resolve()), format="video/mp4")
 
 
+def process_audio_rendering(
+    media_path: str = None,
+    audio_path: str = None,
+    dub_volume: float = 1.0,
+    enable_bg_music: bool = False,
+    bg_music_vol: float = 0.20,
+    enable_orig_voice: bool = False,
+    orig_voice_vol: float = 0.15,
+    output_mp3_path: str = None,
+    bitrate: str = "192k",
+) -> str:
+    """
+    Renders high-quality MP3 audio by mixing the dubbed voice-over audio
+    with optional background music and original vocal track extracted from media_path using FFmpeg.
+    """
+    user_storage = get_user_storage_dir()
+    if output_mp3_path:
+        out_path = Path(output_mp3_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_path = user_storage / "dubbed_output.mp3"
+
+    if out_path.exists():
+        try:
+            out_path.unlink()
+        except Exception:
+            pass
+
+    has_audio_track = bool(audio_path and Path(audio_path).exists())
+    has_media = bool(media_path and Path(media_path).exists())
+    has_source_audio = video_has_audio(media_path) if has_media else False
+
+    # Normalize volume inputs (supports 0-100 percentage or 0.0-1.5 float)
+    norm_bg_vol = (float(bg_music_vol) / 100.0) if float(bg_music_vol) > 1.0 else float(bg_music_vol)
+    norm_orig_vol = (float(orig_voice_vol) / 100.0) if float(orig_voice_vol) > 1.0 else float(orig_voice_vol)
+    norm_dub_vol = (float(dub_volume) / 100.0) if float(dub_volume) > 1.5 else float(dub_volume)
+
+    cmd = [FFMPEG_BIN, "-y"]
+    filter_complex = []
+    audio_map = None
+
+    if has_media and has_source_audio and (enable_bg_music or enable_orig_voice) and (norm_bg_vol > 0 or norm_orig_vol > 0):
+        cmd.extend(["-i", str(Path(media_path).resolve())])
+        if has_audio_track and norm_dub_vol > 0:
+            cmd.extend(["-i", str(Path(audio_path).resolve())])
+            if enable_bg_music and not enable_orig_voice:
+                filter_complex.append(
+                    f"[0:a:0]stereotools=mlev=0.015625:slev=1.2,volume={norm_bg_vol:.2f}[bg];"
+                    f"[1:a:0]volume={norm_dub_vol:.2f}[dub];"
+                    f"[bg][dub]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+                )
+            elif enable_orig_voice and not enable_bg_music:
+                filter_complex.append(
+                    f"[0:a:0]stereotools=mlev=1.2:slev=0.15,volume={norm_orig_vol:.2f}[orig];"
+                    f"[1:a:0]volume={norm_dub_vol:.2f}[dub];"
+                    f"[orig][dub]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+                )
+            else:
+                mix_vol = max(norm_bg_vol, norm_orig_vol)
+                filter_complex.append(
+                    f"[0:a:0]volume={mix_vol:.2f}[orig];"
+                    f"[1:a:0]volume={norm_dub_vol:.2f}[dub];"
+                    f"[orig][dub]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+                )
+            audio_map = "[aout]"
+        else:
+            if enable_bg_music and not enable_orig_voice:
+                filter_complex.append(f"[0:a:0]stereotools=mlev=0.015625:slev=1.2,volume={norm_bg_vol:.2f}[bgout]")
+                audio_map = "[bgout]"
+            elif enable_orig_voice and not enable_bg_music:
+                filter_complex.append(f"[0:a:0]stereotools=mlev=1.2:slev=0.15,volume={norm_orig_vol:.2f}[origout]")
+                audio_map = "[origout]"
+            else:
+                mix_vol = max(norm_bg_vol, norm_orig_vol)
+                filter_complex.append(f"[0:a:0]volume={mix_vol:.2f}[origout]")
+                audio_map = "[origout]"
+    elif has_audio_track:
+        cmd.extend(["-i", str(Path(audio_path).resolve())])
+        if abs(norm_dub_vol - 1.0) > 0.01:
+            filter_complex.append(f"[0:a:0]volume={norm_dub_vol:.2f}[dubout]")
+            audio_map = "[dubout]"
+        else:
+            audio_map = "0:a:0"
+    elif has_media and has_source_audio:
+        cmd.extend(["-i", str(Path(media_path).resolve())])
+        audio_map = "0:a:0"
+    else:
+        raise ValueError("No audio track or media source available to render MP3.")
+
+    if filter_complex:
+        cmd.extend(["-filter_complex", ";".join(filter_complex)])
+        cmd.extend(["-map", audio_map])
+    elif audio_map:
+        cmd.extend(["-map", audio_map])
+
+    clean_bitrate = str(bitrate).split()[0].lower()
+    if not clean_bitrate.endswith("k"):
+        clean_bitrate = f"{clean_bitrate}k"
+
+    cmd.extend([
+        "-vn",
+        "-c:a", "libmp3lame",
+        "-b:a", clean_bitrate,
+        str(out_path.resolve()),
+    ])
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg MP3 render error:\n{proc.stderr}")
+
+    return str(out_path.resolve())
+
+
+def render_mp3_preview(mp3_path: str):
+    if not mp3_path:
+        st.info("No MP3 file available to preview.")
+        return
+    p = Path(mp3_path)
+    if not p.exists() or p.stat().st_size == 0:
+        st.info("No valid MP3 file available to preview.")
+        return
+    try:
+        with open(p, "rb") as af:
+            a_data = af.read()
+        st.audio(a_data, format="audio/mp3")
+    except Exception:
+        st.audio(str(p.resolve()), format="audio/mp3")
+
+
 def transcribe_one_folder(
     folder_path: str | Path = None,
     output_folder: str | Path = None,
@@ -2653,6 +2782,7 @@ if st.session_state.get("_active_session_user") != _curr_auth_user:
     st.session_state.dubbed_audio_bytes = None
     st.session_state.dubbed_audio_path = ""
     st.session_state.output_video_path = ""
+    st.session_state.output_mp3_path = ""
     st.session_state.subtitle_voices = {}
     st.session_state.detected_voice_info = None
     st.session_state.batch_dub_results = None
@@ -2663,6 +2793,7 @@ if st.session_state.get("_active_session_user") != _curr_auth_user:
     # Restore from this user's private storage folder only
     if _curr_auth_user:
         _init_video = _user_storage_init / "dubbed_output.mp4"
+        _init_mp3 = _user_storage_init / "dubbed_output.mp3"
         _init_audio = _user_storage_init / "dubbed_voiceover.wav"
         _init_srt = _user_storage_init / "burn_subtitles.srt"
         _init_media = _user_storage_init / "uploaded_media.mp4"
@@ -2685,6 +2816,8 @@ if st.session_state.get("_active_session_user") != _curr_auth_user:
                 pass
         if _init_video.exists():
             st.session_state.output_video_path = str(_init_video.resolve())
+        if _init_mp3.exists():
+            st.session_state.output_mp3_path = str(_init_mp3.resolve())
 
         _user_batch_in = _user_storage_init / "batch_input"
         if _user_batch_in.exists():
@@ -2707,6 +2840,8 @@ if "dubbed_audio_path" not in st.session_state:
     st.session_state.dubbed_audio_path = ""
 if "output_video_path" not in st.session_state:
     st.session_state.output_video_path = ""
+if "output_mp3_path" not in st.session_state:
+    st.session_state.output_mp3_path = ""
 if "enable_bg_music" not in st.session_state:
     st.session_state.enable_bg_music = False
 if "bg_music_vol" not in st.session_state:
@@ -3087,7 +3222,7 @@ if is_admin_user:
         "02 📁 Folder Auto-Dub",
         "03 🌐 Translate",
         "04 ✏️ Voice & Edit",
-        "05 🎬 Video Studio",
+        "05 🎵 Render MP3",
         cust_tab_title,
     ])
 else:
@@ -3096,12 +3231,25 @@ else:
         "02 📁 Folder Auto-Dub",
         "03 🌐 Translate",
         "04 ✏️ Voice & Edit",
-        "05 🎬 Video Studio",
+        "05 🎵 Render MP3",
     ])
     tab_customers = None
 
-# Global Video Preview Banner if video is ready
-if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
+# Global Preview Banner if audio / video is ready
+if st.session_state.get("output_mp3_path") and Path(st.session_state.output_mp3_path).exists():
+    with st.expander("🎵 **ស្តាប់សម្លេង MP3 ដែលបានផលិតរួចរាល់ (Click to Listen Dubbed MP3 Preview)**", expanded=False):
+        render_mp3_preview(st.session_state.output_mp3_path)
+        with open(st.session_state.output_mp3_path, "rb") as af_top:
+            a_top_bytes = af_top.read()
+        st.download_button(
+            "📥 Download Dubbed MP3 (.MP3)",
+            data=a_top_bytes,
+            file_name="dubbed_studio_output.mp3",
+            mime="audio/mp3",
+            use_container_width=True,
+            key="dl_mp3_top_banner",
+        )
+elif st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
     with st.expander("🎬 **ទស្សនាវិដេអូដែលបានបញ្ចូលសម្លេងរួចរាល់ (Click to Watch Dubbed Video Preview)**", expanded=False):
         render_video_preview(st.session_state.output_video_path)
         with open(st.session_state.output_video_path, "rb") as vf_top:
@@ -4597,14 +4745,14 @@ with tab_editor_voice:
             )
 
 # ----------------------------------------------------
-# TAB 04: Video Studio & Dubbing
+# TAB 04: MP3 Audio Studio & Dubbing
 # ----------------------------------------------------
 with tab_video:
     st.markdown(
         """
         <div class="tab-header">
-            <h3>Step 4: Video Studio — Hardsub Burning & Audio Dubbing</h3>
-            <p style="color: #94a3b8; margin: 0;">Export high-definition MP4 videos with burned-in subtitles and dubbed Khmer audio tracks.</p>
+            <h3>Step 4: Audio Studio — Render Dubbed MP3</h3>
+            <p style="color: #94a3b8; margin: 0;">Export high-definition MP3 audio with dubbed Khmer voice-over, background music, and original audio mix.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4613,38 +4761,25 @@ with tab_video:
     v_col1, v_col2 = st.columns([1.2, 1], gap="medium")
     
     with v_col1:
-        # Determine source video
-        default_video_path = st.session_state.uploaded_media_path if st.session_state.is_video else ""
-        if default_video_path and Path(default_video_path).exists():
-            st.success(f"Detected video from Step 1: `{Path(default_video_path).name}`")
-            video_to_use = default_video_path
+        # Determine source media (video or audio) for background music / original voice
+        default_media_path = st.session_state.uploaded_media_path if st.session_state.get("uploaded_media_path") else ""
+        if default_media_path and Path(default_media_path).exists():
+            st.success(f"Detected media from Step 1: `{Path(default_media_path).name}`")
+            media_to_use = default_media_path
         else:
-            custom_video = st.file_uploader("Upload Target Video for Dubbing", type=["mp4", "mov", "webm", "mkv"], key="custom_video_uploader")
-            if custom_video:
-                save_path = get_user_storage_dir() / f"target_video{Path(custom_video.name).suffix}"
-                save_path.write_bytes(custom_video.getvalue())
-                video_to_use = str(save_path.resolve())
-            else:
-                video_to_use = ""
-
-        st.markdown("#### 🛠️ Dubbing & Audio Settings")
-        
-        burn_subs = st.checkbox(
-            "Burn Subtitles into Video (Hardsub)",
-            value=st.session_state.get("burn_subtitles_pref", False),
-            key="t4_burn_subs",
-            help="Turn OFF (default) to keep video clean with NO subtitles on screen. Turn ON to hardcode subtitles.",
-        )
-        st.session_state.burn_subtitles_pref = burn_subs
-
-        if burn_subs:
-            subtitle_source = st.radio(
-                "Subtitles to Burn",
-                ["Khmer Subtitles", "Original Source Subtitles"],
-                horizontal=True,
+            custom_media = st.file_uploader(
+                "Upload Source Media (for Background Music / Original Voice extraction)",
+                type=["mp3", "wav", "m4a", "aac", "mp4", "mov", "webm", "mkv"],
+                key="custom_media_uploader_t4",
             )
-        else:
-            subtitle_source = "Khmer Subtitles"
+            if custom_media:
+                save_path = get_user_storage_dir() / f"source_media{Path(custom_media.name).suffix}"
+                save_path.write_bytes(custom_media.getvalue())
+                media_to_use = str(save_path.resolve())
+            else:
+                media_to_use = ""
+
+        st.markdown("#### 🛠️ MP3 Dubbing & Audio Settings")
 
         v_counts = st.session_state.get("voice_gender_counts", {})
         m_v = v_counts.get("male", 0)
@@ -4653,12 +4788,12 @@ with tab_video:
             f"""
             <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin: 10px 0 14px 0;">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                    <span style="font-weight: 700; font-size: 0.92rem; color: #34d399;">🎬 វិដេអូតែមួយនិយាយទាំងប្រុស (Piseth) និងស្រី (Sreymom)</span>
-                    <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Multi-Speaker Video</span>
+                    <span style="font-weight: 700; font-size: 0.92rem; color: #34d399;">🎙️ សម្លេងតួអង្គប្រុស (Piseth) និងស្រី (Sreymom)</span>
+                    <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Multi-Speaker Audio</span>
                 </div>
                 <p style="font-size: 0.78rem; color: #94a3b8; margin: 0;">
                     {f"👨 Piseth: <b>{m_v}</b> ឃ្លា • 👩 Sreymom: <b>{f_v}</b> ឃ្លា • " if (m_v or f_v) else ""}
-                    វិដេអូដែលចេញមកនឹងមានសម្លេងតួអង្គប្រុស & ស្រីឆ្លាស់គ្នាតាមសាច់រឿងក្នុងខ្សែវិដេអូតែមួយគត់។
+                    ឯកសារ MP3 ដែលផលិតចេញមកនឹងមានសម្លេងបញ្ចូលគ្នា និងតម្រឹមតាមពេលវេលាជាក់ស្តែង។
                 </p>
             </div>
             <div style="background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 12px 14px; margin: 0 0 14px 0;">
@@ -4666,7 +4801,7 @@ with tab_video:
                     <span style="font-weight: 700; font-size: 0.92rem; color: #f8fafc;">🎛️ Audio Controls (Music & Original Voice)</span>
                     <span style="font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 8px; border-radius: 6px; font-weight: 600;">Dubbing Mix</span>
                 </div>
-                <p style="font-size: 0.75rem; color: #94a3b8; margin: 0 0 6px 0;">Turn ON or OFF background music and original actor dialogue independently.</p>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin: 0 0 6px 0;">Turn ON or OFF background music and original actor dialogue independently for the MP3 render.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -4700,7 +4835,7 @@ with tab_video:
                 "🗣️ Original Voice",
                 value=st.session_state.get("enable_orig_voice", False),
                 key="t4_enable_orig_voice",
-                help="Turn ON to keep original actor/speaker voice softly playing in background (documentary style). Turn OFF to mute original voice.",
+                help="Turn ON to keep original actor/speaker voice softly playing in background. Turn OFF to mute original voice.",
             )
             if t4_enable_orig_voice:
                 t4_orig_voice_vol = st.slider(
@@ -4717,96 +4852,100 @@ with tab_video:
                 t4_orig_voice_vol = 0
             st.session_state.enable_orig_voice = t4_enable_orig_voice
 
-        dub_vol_t4 = st.slider(
-            "🎙️ Dubbed Voice-Over Volume",
-            min_value=0,
-            max_value=150,
-            value=int(st.session_state.get("dub_voice_vol", 100)),
-            step=5,
-            format="%d%%",
-            key="t4_dub_vol",
-            help="Set to 0% if you only want the video's original audio track without voice-over.",
-        )
-        st.session_state.dub_voice_vol = dub_vol_t4
+        col_t4_vol, col_t4_qual = st.columns([1.2, 1])
+        with col_t4_vol:
+            dub_vol_t4 = st.slider(
+                "🎙️ Dubbed Voice-Over Volume",
+                min_value=0,
+                max_value=150,
+                value=int(st.session_state.get("dub_voice_vol", 100)),
+                step=5,
+                format="%d%%",
+                key="t4_dub_vol",
+                help="Set to 0% if you only want the original audio track without dubbed voice-over.",
+            )
+            st.session_state.dub_voice_vol = dub_vol_t4
+        with col_t4_qual:
+            mp3_bitrate = st.selectbox(
+                "MP3 Quality / Bitrate",
+                options=["192k (Standard)", "320k (High Quality)", "128k (Fast/Small)"],
+                index=0,
+                key="t4_mp3_bitrate",
+            )
+            bitrate_val = mp3_bitrate.split()[0]
 
-        btn_render_video = st.button("🎬 Render & Export Final Dubbed Video", type="primary", use_container_width=True)
-        if btn_render_video:
-            if not video_to_use or not Path(video_to_use).exists():
-                st.error("Please provide a valid video file.")
+        btn_render_mp3 = st.button("🎵 Render & Export Final Dubbed MP3", type="primary", use_container_width=True)
+        if btn_render_mp3:
+            # Check audio source
+            audio_for_mp3 = st.session_state.dubbed_audio_path if st.session_state.get("dubbed_audio_path") and Path(st.session_state.dubbed_audio_path).exists() else None
+            if not audio_for_mp3 and st.session_state.get("dubbed_audio_bytes"):
+                tmp_dub = get_user_storage_dir() / "dubbed_voiceover.wav"
+                tmp_dub.write_bytes(st.session_state.dubbed_audio_bytes)
+                audio_for_mp3 = str(tmp_dub.resolve())
+                st.session_state.dubbed_audio_path = audio_for_mp3
+
+            if dub_vol_t4 > 0 and not audio_for_mp3 and not (media_to_use and Path(media_to_use).exists()):
+                st.error("⚠️ No voice-over audio or source media found. Please generate audio in Step 3 first, or upload source media.")
             else:
-                # Prepare SRT file
-                selected_srt_content = st.session_state.khmer_srt if subtitle_source == "Khmer Subtitles" else st.session_state.source_srt
-                if burn_subs and not selected_srt_content:
-                    st.error("No subtitles available to burn. Please complete Step 1 or 2.")
-                else:
-                    srt_temp = get_user_storage_dir() / "burn_subtitles.srt"
-                    if selected_srt_content:
-                        srt_temp.write_text(selected_srt_content, encoding="utf-8")
-                    
-                    # Prepare audio file
-                    audio_for_video = st.session_state.dubbed_audio_path if st.session_state.dubbed_audio_path and Path(st.session_state.dubbed_audio_path).exists() else None
-                    if dub_vol_t4 > 0 and not audio_for_video:
-                        st.warning("No voice-over audio track found. Please generate audio in Step 3 first, or turn on Background Music / Original Voice.")
-                    else:
-                        with st.spinner("Processing video with FFmpeg (encoding H.264 & AAC)..."):
-                            try:
-                                final_video_path = process_video_dubbing(
-                                    video_path=video_to_use,
-                                    audio_path=audio_for_video,
-                                    srt_path=str(srt_temp.resolve()) if burn_subs else None,
-                                    dub_volume=dub_vol_t4,
-                                    burn_subtitles=burn_subs,
-                                    enable_bg_music=t4_enable_bg_music,
-                                    bg_music_vol=t4_bg_music_vol,
-                                    enable_orig_voice=t4_enable_orig_voice,
-                                    orig_voice_vol=t4_orig_voice_vol,
-                                )
-                                st.session_state.output_video_path = final_video_path
-                                st.success("🎉 ដំណើរការផលិតវិដេអូបានចប់សព្វគ្រប់ 100%! (Dubbing Complete!)")
-                                st.markdown("#### 🎬 ទស្សនាវិដេអូដែលបានបញ្ចូលសម្លេង (Dubbed Video Preview):")
-                                render_video_preview(final_video_path)
-                                with open(final_video_path, "rb") as vf_col4:
-                                    video_data_done = vf_col4.read()
-                                st.download_button(
-                                    "📥 Download Dubbed Video (.MP4)",
-                                    data=video_data_done,
-                                    file_name="dubbed_studio_output.mp4",
-                                    mime="video/mp4",
-                                    use_container_width=True,
-                                    key="dl_video_t4_immediate",
-                                )
-                            except Exception as video_err:
-                                st.error(f"Video rendering failed: {video_err}")
+                with st.spinner("Processing & encoding high-quality MP3 with FFmpeg (libmp3lame)..."):
+                    try:
+                        final_mp3_path = process_audio_rendering(
+                            media_path=media_to_use if media_to_use and Path(media_to_use).exists() else None,
+                            audio_path=audio_for_mp3,
+                            dub_volume=dub_vol_t4,
+                            enable_bg_music=t4_enable_bg_music,
+                            bg_music_vol=t4_bg_music_vol,
+                            enable_orig_voice=t4_enable_orig_voice,
+                            orig_voice_vol=t4_orig_voice_vol,
+                            bitrate=bitrate_val,
+                        )
+                        st.session_state.output_mp3_path = final_mp3_path
+                        st.session_state.output_audio_path = final_mp3_path
+                        st.success("🎉 ដំណើរការផលិត MP3 បានចប់សព្វគ្រប់ 100%! (Render MP3 Complete!)")
+                        st.markdown("#### 🎧 ស្តាប់សម្លេង MP3 ដែលបានផលិត (Dubbed MP3 Preview):")
+                        render_mp3_preview(final_mp3_path)
+                        with open(final_mp3_path, "rb") as mf_col4:
+                            mp3_data_done = mf_col4.read()
+                        st.download_button(
+                            "📥 Download Dubbed MP3 (.MP3)",
+                            data=mp3_data_done,
+                            file_name="dubbed_studio_output.mp3",
+                            mime="audio/mp3",
+                            use_container_width=True,
+                            key="dl_mp3_t4_immediate",
+                        )
+                    except Exception as audio_err:
+                        st.error(f"MP3 rendering failed: {audio_err}")
 
     with v_col2:
-        if st.session_state.output_video_path and Path(st.session_state.output_video_path).exists():
-            v_size_mb = Path(st.session_state.output_video_path).stat().st_size / (1024 * 1024)
+        if st.session_state.get("output_mp3_path") and Path(st.session_state.output_mp3_path).exists():
+            mp3_size_mb = Path(st.session_state.output_mp3_path).stat().st_size / (1024 * 1024)
             st.markdown(
                 f"""
                 <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px;">
                     <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <span style="font-weight: 700; color: #34d399; font-size: 1rem;">🎬 វិដេអូដែលបានផលិតរួចរាល់ ({v_size_mb:.2f} MB)</span>
-                        <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Ready to Watch</span>
+                        <span style="font-weight: 700; color: #34d399; font-size: 1rem;">🎧 ឯកសារ MP3 ដែលបានផលិតរួចរាល់ ({mp3_size_mb:.2f} MB)</span>
+                        <span style="font-size: 0.72rem; color: #10b981; background: rgba(16, 185, 129, 0.2); padding: 2px 8px; border-radius: 6px; font-weight: 700;">Ready to Listen</span>
                     </div>
-                    <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">ចុច Play ខាងក្រោមដើម្បីទស្សនាវិដេអូដែលមានសម្លេងតួអង្គប្រុស & ស្រីឆ្លាស់គ្នា!</div>
+                    <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">ចុច Play ខាងក្រោមដើម្បីស្តាប់សម្លេង MP3 ដែលបានតម្រឹម និងបញ្ចូលគ្នា!</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            render_video_preview(st.session_state.output_video_path)
+            render_mp3_preview(st.session_state.output_mp3_path)
             
-            with open(st.session_state.output_video_path, "rb") as vf:
-                video_data = vf.read()
+            with open(st.session_state.output_mp3_path, "rb") as mf:
+                mp3_data = mf.read()
             st.download_button(
-                "📥 Download Dubbed Video (.MP4)",
-                data=video_data,
-                file_name="dubbed_studio_output.mp4",
-                mime="video/mp4",
+                "📥 Download Dubbed MP3 (.MP3)",
+                data=mp3_data,
+                file_name="dubbed_studio_output.mp3",
+                mime="audio/mp3",
                 use_container_width=True,
-                key="dl_video_tab4",
+                key="dl_mp3_tab4",
             )
         else:
-            st.info("The rendered video player and download link will appear here.")
+            st.info("The rendered MP3 player and download link will appear here.")
 
 # ----------------------------------------------------
 # TAB 05: Customer Registration Management & Count Data
