@@ -2856,8 +2856,11 @@ if "orig_voice_vol" not in st.session_state:
 elif isinstance(st.session_state.orig_voice_vol, float) and st.session_state.orig_voice_vol <= 1.0:
     st.session_state.orig_voice_vol = int(round(st.session_state.orig_voice_vol * 100))
 
+if "voice_speed" not in st.session_state:
+    st.session_state.voice_speed = 1.50
+
 if "dub_voice_vol" not in st.session_state:
-    st.session_state.dub_voice_vol = 100
+    st.session_state.dub_voice_vol = 150
 elif isinstance(st.session_state.dub_voice_vol, float) and st.session_state.dub_voice_vol <= 1.5:
     st.session_state.dub_voice_vol = int(round(st.session_state.dub_voice_vol * 100))
 
@@ -3129,7 +3132,15 @@ with st.sidebar:
     else:
         chosen_voice = st.selectbox("gTTS Voice Language", ["km", "en", "th", "vi", "zh-CN"], index=0)
 
-    voice_speed = st.slider("Speech Rate / Speed", min_value=0.75, max_value=1.50, value=1.00, step=0.05)
+    voice_speed = st.slider(
+        "Speech Rate / Speed",
+        min_value=0.75,
+        max_value=2.00,
+        value=float(st.session_state.get("voice_speed", 1.50)),
+        step=0.05,
+        format="%.2fx",
+    )
+    st.session_state.voice_speed = voice_speed
 
     st.markdown("---")
     st.markdown("### 🎬 Video Dubbing & Audio Settings")
@@ -3188,7 +3199,7 @@ with st.sidebar:
         "Dubbed Voice-Over Volume",
         min_value=0,
         max_value=150,
-        value=int(st.session_state.get("dub_voice_vol", 100)),
+        value=int(st.session_state.get("dub_voice_vol", 150)),
         step=5,
         format="%d%%",
         key="sb_dub_vol",
@@ -3457,7 +3468,7 @@ with tab_transcribe:
                 "🎙️ Dubbed Voice-Over Volume",
                 min_value=0,
                 max_value=150,
-                value=int(st.session_state.get("dub_voice_vol", 100)),
+                value=int(st.session_state.get("dub_voice_vol", 150)),
                 step=5,
                 format="%d%%",
                 key="t1_dub_vol",
@@ -3922,7 +3933,7 @@ with tab_batch_folder:
                 chosen_batch_voice = "km-KH-SreymomNeural"
 
         with b_c2:
-            batch_speed = st.slider("⚡ ល្បឿនសម្លេង (Voice Speed)", 0.75, 1.40, 1.0, 0.05, format="%.2fx")
+            batch_speed = st.slider("⚡ ល្បឿនសម្លេង (Voice Speed)", 0.75, 2.00, float(st.session_state.get("voice_speed", 1.50)), 0.05, format="%.2fx")
 
         col_bm_m, col_bm_v = st.columns(2)
         with col_bm_m:
@@ -4858,7 +4869,7 @@ with tab_video:
                 "🎙️ Dubbed Voice-Over Volume",
                 min_value=0,
                 max_value=150,
-                value=int(st.session_state.get("dub_voice_vol", 100)),
+                value=int(st.session_state.get("dub_voice_vol", 150)),
                 step=5,
                 format="%d%%",
                 key="t4_dub_vol",
