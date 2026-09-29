@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Dubber AI Pro Studio</string>
+    <string name="error_title">Cannot Connect to Server</string>
+    <string name="error_desc">Please make sure the Dubber AI server is running on your PC or Cloudflare tunnel is active.</string>
+    <string name="retry_btn">Retry Connection</string>
+    <string name="change_url_btn">Change Server URL</string>
+</resources>

@@ -1,0 +1,58 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build_apk.yml'
+      - 'app_url.json'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for Gradle wrapper
+        run: |
+          cd android
+          gradle wrapper --gradle-version 8.2 || true
+          chmod +x gradlew || true
+
+      - name: Build Android APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK for release
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk DubberAI.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DubberAI-apk
+          path: DubberAI.apk
+          retention-days: 30
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          files: DubberAI.apk
+          name: Dubber AI Pro Studio Android APK
+          tag_name: v1.0.0
+          draft: false
+          prerelease: false
+          generate_release_notes: true

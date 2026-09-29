@@ -1,8 +1,16 @@
 [server]
 enableCORS = false
 enableXsrfProtection = false
-maxUploadSize = 1024
+maxUploadSize = 2048
+maxMessageSize = 500
 headless = true
+fileWatcherType = "none"
+runOnSave = false
+enableWebsocketCompression = true
 
 [browser]
 gatherUsageStats = false
+
+[runner]
+magicEnabled = false
+fastReruns = true

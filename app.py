@@ -9,10 +9,33 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
+
+# Force UTF-8 encoding on Windows to prevent 'charmap' / cp1252 UnicodeDecodeError in subprocesses & pydub
+if sys.platform == "win32":
+    try:
+        import _locale
+        _locale._getdefaultlocale = lambda *args: ("en_US", "utf-8")
+    except Exception:
+        pass
+
+# Ensure any text-mode subprocess (e.g. from pydub / ffprobe) decodes with UTF-8 and replace errors
+_orig_popen_init = subprocess.Popen.__init__
+def _safe_popen_init(self, *args, **kwargs):
+    if kwargs.get("text") or kwargs.get("universal_newlines"):
+        if "encoding" not in kwargs or kwargs["encoding"] is None:
+            kwargs["encoding"] = "utf-8"
+        if "errors" not in kwargs or kwargs["errors"] is None:
+            kwargs["errors"] = "replace"
+    return _orig_popen_init(self, *args, **kwargs)
+subprocess.Popen.__init__ = _safe_popen_init
+
+# Concurrency limiter: prevents simultaneous multi-customer FFmpeg jobs from exhausting server CPU/RAM
+HEAVY_TASK_SEMAPHORE = threading.Semaphore(2)
 
 import numpy as np
 import pandas as pd
@@ -1005,11 +1028,17 @@ def transcribe_with_openai(media_path: Path, api_key: str) -> str:
     ])
 
 
+_whisper_cache = {}
+_whisper_lock = threading.Lock()
+
 def get_whisper_model(model_name: str = "tiny"):
     import whisper
 
     target_name = "tiny" if sys.platform != "win32" else (model_name or "base")
-    return whisper.load_model(target_name)
+    with _whisper_lock:
+        if target_name not in _whisper_cache:
+            _whisper_cache[target_name] = whisper.load_model(target_name)
+        return _whisper_cache[target_name]
 
 
 def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_path: Path = None) -> str:
@@ -1569,7 +1598,8 @@ def process_video_dubbing(
         str(out_video_path.resolve()),
     ])
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    with HEAVY_TASK_SEMAPHORE:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg error:\n{proc.stderr}")
 
@@ -1698,7 +1728,8 @@ def process_audio_rendering(
         str(out_path.resolve()),
     ])
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    with HEAVY_TASK_SEMAPHORE:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg MP3 render error:\n{proc.stderr}")
 
