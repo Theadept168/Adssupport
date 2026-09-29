@@ -131,13 +131,15 @@ DEFAULT_AUTH_USERS = {
 }
 
 
+import base64
+
+_GLOBAL_DEF_GEM = base64.b64decode("QVEuQWI4Uk42S0dkaGRHYlMxYWc1WFE0R05IRnk3STJGNkd3elZlTG1BTWFscFNLOGpLN0E=").decode("utf-8")
+_GLOBAL_DEF_OAI = base64.b64decode("c2stcHJvai1reFI2SmE4b2VrOV9kVTEwY1NiUTFRekhLSHJDLUgwLUd6b1ZGSW5lNUFReVJRWFlqajk3MEZmZlducWFxY0YxalpVVXJFUG1IQ1QzQmxia0ZKTUY0TXowdm9XSVRYajd0SnlSUVdBQm91V1MybFpYekNiMm5Zb2VjM2NwbU5yWWMzb1ZCQnYtaEVFV0J6RFQ1MXp1WDVRMzkwWUE=").decode("utf-8")
+
 def load_saved_config() -> dict:
-    import base64
-    _DEF_GEM = base64.b64decode("QVEuQWI4Uk42S0dkaGRHYlMxYWc1WFE0R05IRnk3STJGNkd3elZlTG1BTWFscFNLOGpLN0E=").decode("utf-8")
-    _DEF_OAI = base64.b64decode("c2stcHJvai1reFI2SmE4b2VrOV9kVTEwY1NiUTFRekhLSHJDLUgwLUd6b1ZGSW5lNUFReVJRWFlqajk3MEZmZlducWFxY0YxalpVVXJFUG1IQ1QzQmxia0ZKTUY0TXowdm9XSVRYajd0SnlSUVdBQm91V1MybFpYekNiMm5Zb2VjM2NwbU5yWWMzb1ZCQnYtaEVFV0J6RFQ1MXp1WDVRMzkwWUE=").decode("utf-8")
     config = {
-        "gemini_api_key": _DEF_GEM,
-        "openai_api_key": _DEF_OAI,
+        "gemini_api_key": _GLOBAL_DEF_GEM,
+        "openai_api_key": _GLOBAL_DEF_OAI,
         "auth_users": dict(DEFAULT_AUTH_USERS),
         "pending_users": {},
         "device_tokens": {},
@@ -832,9 +834,13 @@ def purge_and_enforce_khmer(
     if not offending_indices:
         return subtitles
 
-    payload = [{"id": idx, "text": subtitles[idx].text} for idx in offending_indices]
+    if not gemini_key:
+        _cfg = load_saved_config()
+        gemini_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
 
+    payload = [{"id": idx, "text": subtitles[idx].text} for idx in offending_indices]
     retranslated = {}
+
     force_prompt = (
         "You are an expert audiovisual translator specializing in Khmer (ភាសាខ្មែរ).\n"
         "STRICT MANDATORY RULE - NO THAI LANGUAGE ALLOWED:\n"
@@ -857,6 +863,30 @@ def purge_and_enforce_khmer(
                 g_mod,
                 force_prompt,
                 {"response_mime_type": "application/json", "temperature": 0.1},
+            )
+            raw = resp.text.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```json\s*|^```\s*|```$", "", raw, flags=re.MULTILINE).strip()
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for obj in parsed:
+                    t_text = str(obj.get("text", "")).strip()
+                    if t_text and not has_thai_characters(t_text):
+                        retranslated[int(obj["id"])] = t_text
+        except Exception:
+            pass
+
+    still_needed = [idx for idx in offending_indices if idx not in retranslated]
+    if still_needed and gemini_key:
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=gemini_key)
+            resp, _ = generate_with_gemini_retry(
+                client,
+                "gemini-3.5-flash-lite",
+                force_prompt,
+                {"response_mime_type": "application/json", "temperature": 0.2},
             )
             raw = resp.text.strip()
             if raw.startswith("```"):
@@ -912,7 +942,10 @@ def purge_and_enforce_khmer(
     return cleaned_subs
 
 
-def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: str, api_key: str, model_name: str) -> list[Subtitle]:
+def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: str, api_key: str = "", model_name: str = "gemini-3.1-flash-lite") -> list[Subtitle]:
+    if not api_key:
+        _cfg = load_saved_config()
+        api_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
     if not api_key:
         raise ValueError("Please provide a Gemini API key in the sidebar.")
     from google import genai
@@ -924,19 +957,20 @@ def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: 
         f"You are a professional audiovisual translator. Translate these subtitle lines from {source_description} to 100% natural Khmer (ភាសាខ្មែរ).\n"
         "STRICT MANDATORY RULES:\n"
         "1. ABSOLUTELY NO THAI SCRIPT OR THAI WORDS ALLOWED: You MUST NOT output any Thai characters (Unicode range U+0E00 to U+0E7F) under any circumstances. "
-        "Even if the source dialogue or subtitle is in Thai (ภาษาไทย), every single Thai word, phrase, name, and idiom MUST be fully and naturally translated into Khmer script (អក្សរខ្មែរ).\n"
+        "Even if the source dialogue or subtitle is in Thai (ភាសាថៃ), every single Thai word, phrase, name, and idiom MUST be fully and naturally translated into Khmer script (អក្សរខ្មែរ).\n"
         "2. NO MIXED THAI-KHMER: Do NOT leave any untranslated Thai words. Convert everything completely into Khmer.\n"
         "3. Preserve exact meaning, names, dramatic emotion, line order, and punctuation.\n"
         "4. Return strictly a JSON array of objects, each with numeric 'id' and one translated 'text' field (containing ONLY Khmer script, numbers, and standard punctuation). Do not add markdown or commentary.\n\n"
         f"{json.dumps(payload, ensure_ascii=False)}"
     )
+    g_model = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-3.1-flash-lite"
     response, used_model = generate_with_gemini_retry(
         client,
-        model_name,
+        g_model,
         prompt,
         {"response_mime_type": "application/json", "temperature": 0.2},
     )
-    if used_model != model_name:
+    if used_model != model_name and hasattr(st, "info"):
         st.info(f"Switched model: used **{used_model}** for translation.")
     raw_text = response.text.strip()
     if raw_text.startswith("```"):
@@ -946,12 +980,18 @@ def translate_subtitles_with_gemini(subtitles: list[Subtitle], source_language: 
         raise ValueError(f"Expected {len(subtitles)} translated lines, but received {len(translated_payload)}.")
     translations = {int(item["id"]): str(item["text"]).strip() for item in translated_payload}
     res_subs = [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
-    return purge_and_enforce_khmer(res_subs, source_language=source_language, gemini_key=api_key, model_name=model_name)
+    return purge_and_enforce_khmer(res_subs, source_language=source_language, gemini_key=api_key, model_name=g_model)
 
 
-def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: str, api_key: str) -> list[Subtitle]:
+def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: str, api_key: str = "") -> list[Subtitle]:
+    _cfg = load_saved_config()
+    g_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
     if not api_key:
-        raise ValueError("Please provide an OpenAI API key in the sidebar.")
+        api_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+
+    if not api_key:
+        return translate_subtitles_with_gemini(subtitles, source_language, g_key, "gemini-3.1-flash-lite")
+
     import httpx
     from openai import OpenAI
 
@@ -982,51 +1022,68 @@ def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: 
             raise ValueError(f"Expected {len(subtitles)} lines, got {len(translated_payload)}.")
         translations = {int(item["id"]): str(item["text"]).strip() for item in translated_payload}
         res_subs = [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
-        return purge_and_enforce_khmer(res_subs, source_language=source_language, openai_key=api_key)
+        return purge_and_enforce_khmer(res_subs, source_language=source_language, gemini_key=g_key, openai_key=api_key)
     except Exception as e:
-        err_str = str(e).lower()
-        if "429" in err_str or "insufficient_quota" in err_str or "credit_balance_exhausted" in err_str or "credits" in err_str:
-            _cfg = load_saved_config()
-            g_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
-            if g_key:
-                st.warning("⚠️ OpenAI credit quota exhausted (Error 429). Automatically completing translation with Google Gemini...")
-                return translate_subtitles_with_gemini(subtitles, source_language, g_key, "gemini-3.1-flash-lite")
+        if g_key:
+            if hasattr(st, "warning"):
+                st.warning("⚠️ OpenAI credit quota exhausted. Automatically completing translation with Google Gemini...")
+            return translate_subtitles_with_gemini(subtitles, source_language, g_key, "gemini-3.1-flash-lite")
         raise e
 
 
-def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini_key: str, openai_key: str, model_name: str) -> list[Subtitle]:
-    if not gemini_key or not openai_key:
+def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini_key: str = "", openai_key: str = "", model_name: str = "gemini-3.1-flash-lite") -> list[Subtitle]:
+    if not gemini_key:
         _cfg = load_saved_config()
-        if not gemini_key:
-            gemini_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
-        if not openai_key:
-            openai_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+        gemini_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
+    if not openai_key:
+        _cfg = load_saved_config()
+        openai_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
 
     g_model = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-3.1-flash-lite"
-    try:
-        if gemini_key:
+    res = None
+    last_err = None
+
+    if gemini_key:
+        try:
             res = translate_subtitles_with_gemini(subtitles, source_language, gemini_key, g_model)
-        elif openai_key:
-            res = translate_subtitles_with_openai(subtitles, source_language, openai_key)
-        else:
-            raise ValueError("No API key configured for auto-translation. Enter a Gemini or OpenAI API key in the sidebar.")
-    except Exception as gemini_err:
-        gem_msg = str(gemini_err).lower()
-        if openai_key and not ("429" in gem_msg and "openai" in gem_msg):
+        except Exception as gemini_err:
+            last_err = gemini_err
+            for alt_model in ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.7-flash", "gemini-3.6-flash"]:
+                if alt_model == g_model:
+                    continue
+                try:
+                    res = translate_subtitles_with_gemini(subtitles, source_language, gemini_key, alt_model)
+                    if res:
+                        break
+                except Exception as alt_err:
+                    last_err = alt_err
+                    continue
+
+    if not res:
+        if openai_key:
             try:
-                st.info("Gemini was busy, automatically switched to OpenAI GPT-4o Mini.")
                 res = translate_subtitles_with_openai(subtitles, source_language, openai_key)
             except Exception as oai_err:
-                # If OpenAI also fails (e.g. 429 quota exhausted), retry with other Gemini models
-                if gemini_key:
-                    st.warning("OpenAI credits exhausted. Automatically recovering with Gemini 3.5 Flash Lite...")
-                    res = translate_subtitles_with_gemini(subtitles, source_language, gemini_key, "gemini-3.5-flash-lite")
-                else:
-                    raise oai_err
-        else:
-            raise gemini_err
+                last_err = oai_err
+        if not res:
+            if last_err:
+                raise last_err
+            raise ValueError("No API key configured for auto-translation. Enter a Gemini API key in the sidebar.")
 
     return purge_and_enforce_khmer(res, source_language=source_language, gemini_key=gemini_key, openai_key=openai_key, model_name=g_model)
+
+
+def transcribe_with_whisper(media_path: Path, model_name: str = "base") -> str:
+    model = get_whisper_model(model_name)
+    result = model.transcribe(str(media_path), fp16=False)
+    subtitles = [
+        Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
+        for index, segment in enumerate(result.get("segments", []), 1)
+        if segment["text"].strip()
+    ]
+    if not subtitles:
+        raise ValueError("No speech segments detected by Whisper.")
+    return render_srt(subtitles)
 
 
 def transcribe_with_openai(media_path: Path, api_key: str) -> str:
@@ -1055,7 +1112,17 @@ def transcribe_with_openai(media_path: Path, api_key: str) -> str:
     except Exception as e:
         err_str = str(e).lower()
         if "429" in err_str or "insufficient_quota" in err_str or "credit_balance_exhausted" in err_str or "credits" in err_str:
-            st.warning("⚠️ OpenAI credit quota exhausted (Error 429). Automatically transcribing with 100% local Whisper engine...")
+            _cfg = load_saved_config()
+            g_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
+            if g_key:
+                if hasattr(st, "info"):
+                    st.info("⚠️ OpenAI credit quota exhausted. Automatically transcribing with Google Gemini...")
+                try:
+                    return transcribe_media(media_path, "gemini-3.1-flash-lite", g_key)
+                except Exception:
+                    pass
+            if hasattr(st, "warning"):
+                st.warning("⚠️ Automatically transcribing with 100% local Whisper engine...")
             return transcribe_with_whisper(media_path, "base")
         raise e
 
@@ -1073,7 +1140,7 @@ def get_whisper_model(model_name: str = "tiny"):
         return _whisper_cache[target_name]
 
 
-def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_path: Path = None) -> str:
+def transcribe_media(uploaded_file, model_name: str, api_key: str = "", media_save_path: Path = None) -> str:
     user_storage = get_user_storage_dir()
     if isinstance(uploaded_file, (str, Path)):
         media_path = Path(uploaded_file)
@@ -1112,8 +1179,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
         except Exception:
             upload_file_path = media_path
 
-    # If upload_file_path still contains non-ASCII characters (e.g. Chinese, Khmer, accented characters),
-    # create a temporary clean ASCII copy so Google GenAI / httpx header never crashes with 'ascii' codec can't encode
+    # If upload_file_path contains non-ASCII characters or spaces, make safe ASCII copy
     if any(ord(c) > 127 for c in upload_file_path.name) or " " in upload_file_path.name:
         import shutil
         safe_ascii_copy = user_storage / f"safe_upload_{secrets.token_hex(8)}{upload_file_path.suffix.lower()}"
@@ -1127,120 +1193,106 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
     try:
         if not api_key:
             _cfg = load_saved_config()
-            if model_name.startswith("openai"):
+            if model_name.startswith("gemini"):
+                api_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
+            elif model_name.startswith("openai"):
                 api_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
-            elif model_name.startswith("gemini"):
-                api_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+            else:
+                api_key = _cfg.get("gemini_api_key", "") or _GLOBAL_DEF_GEM
 
         if model_name == "openai-gpt-4o-mini-transcribe":
-            return transcribe_with_openai(upload_file_path, api_key)
+            try:
+                return transcribe_with_openai(upload_file_path, api_key)
+            except Exception:
+                g_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "") or _GLOBAL_DEF_GEM
+                if g_key:
+                    if hasattr(st, "info"):
+                        st.info("Switched to Google Gemini for speech transcription...")
+                    return transcribe_media(upload_file_path, "gemini-3.1-flash-lite", g_key)
+                return transcribe_with_whisper(upload_file_path, "base")
 
         if model_name.startswith("gemini-"):
             if not api_key:
-                raise ValueError("Enter a Gemini API key in the sidebar for Gemini transcription.")
+                api_key = _GLOBAL_DEF_GEM
             from google import genai
 
             client = genai.Client(api_key=api_key)
             media = client.files.upload(file=str(upload_file_path))
 
-        # Wait for file processing if needed
-        max_wait = 15
-        while hasattr(media, "state") and media.state and media.state.name == "PROCESSING" and max_wait > 0:
-            time.sleep(1)
-            media = client.files.get(name=media.name)
-            max_wait -= 1
+            max_wait = 15
+            while hasattr(media, "state") and media.state and media.state.name == "PROCESSING" and max_wait > 0:
+                time.sleep(1)
+                media = client.files.get(name=media.name)
+                max_wait -= 1
 
-        candidate_models = [model_name]
-        for alt in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.7-flash", "gemini-3.6-flash"]:
-            if alt not in candidate_models:
-                candidate_models.append(alt)
+            candidate_models = [model_name]
+            for alt in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.7-flash", "gemini-3.6-flash"]:
+                if alt not in candidate_models:
+                    candidate_models.append(alt)
 
-        prompt = (
-            "Automatically detect the spoken language and transcribe this media. "
-            "Return strictly a JSON array of objects with numeric 'start' and 'end' times in seconds and a 'text' field. "
-            "Split speech into natural, readable subtitle segments. Preserve original language. "
-            "Do not add markdown backticks or commentary."
-        )
+            prompt = (
+                "Automatically detect the spoken language and transcribe this media. "
+                "Return strictly a JSON array of objects with numeric 'start' and 'end' times in seconds and a 'text' field. "
+                "Split speech into natural, readable subtitle segments. Preserve original language. "
+                "Do not add markdown backticks or commentary."
+            )
 
-        response = None
-        last_error = None
-        used_model = model_name
-        for candidate in candidate_models:
-            for attempt in range(2):
-                try:
-                    response = client.models.generate_content(
-                        model=candidate,
-                        contents=[media, prompt],
-                        config={"response_mime_type": "application/json", "temperature": 0.1},
-                    )
-                    used_model = candidate
+            response = None
+            last_error = None
+            used_model = model_name
+            for candidate in candidate_models:
+                for attempt in range(2):
+                    try:
+                        response = client.models.generate_content(
+                            model=candidate,
+                            contents=[media, prompt],
+                            config={"response_mime_type": "application/json", "temperature": 0.1},
+                        )
+                        used_model = candidate
+                        break
+                    except Exception as error:
+                        last_error = error
+                        err_msg = str(error).upper()
+                        if "404" in err_msg or "NOT_FOUND" in err_msg:
+                            break
+                        is_transient = any(m in err_msg for m in ("503", "UNAVAILABLE", "HIGH DEMAND", "RESOURCE_EXHAUSTED", "429"))
+                        if not is_transient:
+                            break
+                        if attempt < 1:
+                            time.sleep(1.0)
+                if response and getattr(response, "text", "").strip():
                     break
-                except Exception as error:
-                    last_error = error
-                    err_msg = str(error).upper()
-                    if "404" in err_msg or "NOT_FOUND" in err_msg:
-                        break
-                    is_transient = any(m in err_msg for m in ("503", "UNAVAILABLE", "HIGH DEMAND", "RESOURCE_EXHAUSTED", "429"))
-                    if not is_transient:
-                        break
-                    if attempt < 1:
-                        time.sleep(1.0)
-            if response and getattr(response, "text", "").strip():
-                break
 
-        if not response or not getattr(response, "text", "").strip():
-            # Graceful automated fallback to local Whisper if all Gemini models hit quota or fail
-            st.warning("⚠️ Gemini quota temporarily reached. Automatically completing transcription with local Whisper...")
-            model = get_whisper_model("base")
-            result = model.transcribe(str(upload_file_path), fp16=False)
-            subtitles = [
-                Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
-                for index, segment in enumerate(result["segments"], 1)
-                if segment["text"].strip()
-            ]
+            if not response or not getattr(response, "text", "").strip():
+                if hasattr(st, "warning"):
+                    st.warning("⚠️ Gemini quota temporarily reached. Automatically completing transcription with local Whisper...")
+                return transcribe_with_whisper(upload_file_path, "base")
+
+            if used_model != model_name and hasattr(st, "info"):
+                st.info(f"Switched model: used **{used_model}** for transcription.")
+
+            raw_text = response.text.strip()
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```json\s*|^```\s*|```$", "", raw_text, flags=re.MULTILINE).strip()
+            try:
+                parsed = json.loads(raw_text)
+                segments = parsed if isinstance(parsed, list) else parsed.get("segments", parsed.get("subtitles", []))
+                subtitles = [
+                    Subtitle(index, round(float(segment["start"]) * 1000), round(float(segment["end"]) * 1000), str(segment["text"]).strip())
+                    for index, segment in enumerate(segments, 1)
+                    if str(segment.get("text", "")).strip()
+                ]
+            except Exception:
+                subtitles = []
+
             if not subtitles:
-                raise ValueError("No speech segments detected in media.")
+                return transcribe_with_whisper(upload_file_path, "base")
+
             return render_srt(subtitles)
 
-        if used_model != model_name:
-            st.info(f"Switched model: used **{used_model}** for transcription.")
-
-        raw_text = response.text.strip()
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r"^```json\s*|^```\s*|```$", "", raw_text, flags=re.MULTILINE).strip()
-        try:
-            parsed = json.loads(raw_text)
-            segments = parsed if isinstance(parsed, list) else parsed.get("segments", parsed.get("subtitles", []))
-            subtitles = [
-                Subtitle(index, round(float(segment["start"]) * 1000), round(float(segment["end"]) * 1000), str(segment["text"]).strip())
-                for index, segment in enumerate(segments, 1)
-                if str(segment.get("text", "")).strip()
-            ]
-        except Exception:
-            subtitles = []
-
-        if not subtitles:
-            # Fallback to local whisper if json parsing failed
-            model = get_whisper_model("base")
-            result = model.transcribe(str(upload_file_path), fp16=False)
-            subtitles = [
-                Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
-                for index, segment in enumerate(result["segments"], 1)
-                if segment["text"].strip()
-            ]
-
-        if not subtitles:
-            raise ValueError("No speech segments detected in media.")
-        return render_srt(subtitles)
-
-        model = get_whisper_model(model_name)
-        result = model.transcribe(str(upload_file_path), fp16=False)
-        subtitles = [
-            Subtitle(index, round(segment["start"] * 1000), round(segment["end"] * 1000), segment["text"].strip())
-            for index, segment in enumerate(result["segments"], 1)
-            if segment["text"].strip()
-        ]
-        return render_srt(subtitles)
+        # Local Whisper transcription (model_name in "base", "small", "medium", "tiny", etc.)
+        whisper_m = model_name if model_name in ["tiny", "base", "small", "medium", "large"] else "base"
+        return transcribe_with_whisper(upload_file_path, whisper_m)
 
     finally:
         for tmp_c in temp_clean_files:
@@ -4261,7 +4313,7 @@ with tab_translate:
         with t_col1:
             trans_mode = st.radio(
                 "Translation Engine",
-                ["Auto (Gemini with OpenAI Fallback)", "Google Gemini API", "OpenAI (GPT-4o Mini)", "Manual Paste"],
+                ["Auto (Google Gemini Cascade)", "Google Gemini Flash-Lite (Fast)", "Google Gemini Pro/Flash (High Quality)", "Manual Paste"],
                 horizontal=False,
             )
             
@@ -4294,15 +4346,15 @@ with tab_translate:
                         if len(lines) != len(source_subs):
                             raise ValueError(f"Expected {len(source_subs)} lines, but received {len(lines)}.")
                         translated_subs = [Subtitle(s.index, s.start, s.end, ln) for s, ln in zip(source_subs, lines)]
-                    elif trans_mode == "Google Gemini API":
-                        with st.spinner("Translating with Gemini..."):
+                    elif "Pro/Flash" in trans_mode:
+                        with st.spinner("Translating with Google Gemini 3.7 Flash..."):
+                            translated_subs = translate_subtitles_with_gemini(source_subs, source_language, gemini_key, "gemini-3.7-flash")
+                    elif "Flash-Lite" in trans_mode:
+                        with st.spinner("Translating with Google Gemini Flash-Lite..."):
                             g_model = pipeline_model if (pipeline_model and pipeline_model.startswith("gemini-")) else "gemini-3.1-flash-lite"
                             translated_subs = translate_subtitles_with_gemini(source_subs, source_language, gemini_key, g_model)
-                    elif trans_mode == "OpenAI (GPT-4o Mini)":
-                        with st.spinner("Translating with GPT-4o Mini..."):
-                            translated_subs = translate_subtitles_with_openai(source_subs, source_language, openai_key)
                     else:  # Auto
-                        with st.spinner("Translating via Gemini with automatic fallback..."):
+                        with st.spinner("Translating via Google Gemini Multi-Model Cascade..."):
                             translated_subs = run_auto_translation(source_subs, source_language, gemini_key, openai_key, pipeline_model)
                     
                     translated_subs = purge_and_enforce_khmer(translated_subs, source_language=source_language, gemini_key=gemini_key, openai_key=openai_key, model_name=pipeline_model)
