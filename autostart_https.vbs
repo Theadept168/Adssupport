@@ -60,7 +60,7 @@ If Not objFSO.FileExists(strDir & "cloudflared.exe") Then
     MsgBox "cloudflared.exe not found in:" & Chr(13) & strDir, 16, "Dubber - Error"
     WScript.Quit
 End If
-objShell.Run "cmd /c """ & strDir & "cloudflared.exe"" tunnel --url http://localhost:8501 > """ & logPath & """ 2>&1", 0, False
+objShell.Run "cmd /c """ & strDir & "cloudflared.exe"" tunnel --protocol http2 --edge-ip-version 4 --url http://localhost:8501 > """ & logPath & """ 2>&1", 0, False
 
 ' --- Poll for URL (up to 60s) ---
 Dim urlFound, fileContent
