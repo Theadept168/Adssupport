@@ -763,29 +763,35 @@ def run_async(coro):
 def generate_with_gemini_retry(client, model_name: str, contents, config):
     model_names = [model_name]
     fallback_candidates = [
-        "gemini-flash-latest",
         "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
         "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
     ]
     for c in fallback_candidates:
         if c not in model_names:
             model_names.append(c)
 
     last_error = None
-    for candidate in model_names[:6]:
+    for candidate in model_names[:8]:
         for attempt in range(2):
             try:
                 return client.models.generate_content(model=candidate, contents=contents, config=config), candidate
             except Exception as error:
                 last_error = error
-                is_transient = any(m in str(error).upper() for m in ("503", "UNAVAILABLE", "HIGH DEMAND", "RESOURCE_EXHAUSTED", "429"))
+                err_msg = str(error).upper()
+                if "404" in err_msg or "NOT_FOUND" in err_msg:
+                    break
+                is_transient = any(m in err_msg for m in ("503", "UNAVAILABLE", "HIGH DEMAND", "RESOURCE_EXHAUSTED", "429"))
                 if not is_transient:
                     break
                 if attempt < 1:
-                    time.sleep(1.5)
+                    time.sleep(1.0)
     raise RuntimeError(f"All Gemini models exhausted. Last error: {last_error}")
+
 
 
 THAI_CHAR_PATTERN = re.compile(r"[\u0e00-\u0e7f]")
@@ -812,7 +818,7 @@ def purge_and_enforce_khmer(
     source_language: str = "auto",
     gemini_key: str = "",
     openai_key: str = "",
-    model_name: str = "gemini-flash-latest",
+    model_name: str = "gemini-3.1-flash-lite",
 ) -> list[Subtitle]:
     """
     Scans subtitle segments. If ANY Thai characters (U+0E00-U+0E7F) are detected,
@@ -845,7 +851,7 @@ def purge_and_enforce_khmer(
             from google import genai
 
             client = genai.Client(api_key=gemini_key)
-            g_mod = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-flash-latest"
+            g_mod = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-3.1-flash-lite"
             resp, _ = generate_with_gemini_retry(
                 client,
                 g_mod,
@@ -949,33 +955,43 @@ def translate_subtitles_with_openai(subtitles: list[Subtitle], source_language: 
     import httpx
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, http_client=httpx.Client())
     source_description = "the detected source language" if source_language.strip().lower() == "auto" else source_language
     payload = [{"id": position, "text": item.text} for position, item in enumerate(subtitles)]
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    f"Translate subtitle lines from {source_description} to 100% natural Khmer (ភាសាខ្មែរ). "
-                    "CRITICAL BAN ON THAI: Under NO circumstance should any Thai characters (U+0E00-U+0E7F) appear in the output. "
-                    "If the source is in Thai or contains Thai words, you MUST translate every single Thai word completely into Khmer script (អក្សរខ្មែរ). "
-                    "Return JSON with a 'translations' array of objects having numeric 'id' and 'text'. Maintain exact order, names, and tone."
-                ),
-            },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.2,
-    )
-    result = json.loads(response.choices[0].message.content)
-    translated_payload = result.get("translations", [])
-    if len(translated_payload) != len(subtitles):
-        raise ValueError(f"Expected {len(subtitles)} lines, got {len(translated_payload)}.")
-    translations = {int(item["id"]): str(item["text"]).strip() for item in translated_payload}
-    res_subs = [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
-    return purge_and_enforce_khmer(res_subs, source_language=source_language, openai_key=api_key)
+    try:
+        client = OpenAI(api_key=api_key, http_client=httpx.Client())
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Translate subtitle lines from {source_description} to 100% natural Khmer (ភាសាខ្មែរ). "
+                        "CRITICAL BAN ON THAI: Under NO circumstance should any Thai characters (U+0E00-U+0E7F) appear in the output. "
+                        "If the source is in Thai or contains Thai words, you MUST translate every single Thai word completely into Khmer script (អក្សរខ្មែរ). "
+                        "Return JSON with a 'translations' array of objects having numeric 'id' and 'text'. Maintain exact order, names, and tone."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        result = json.loads(response.choices[0].message.content)
+        translated_payload = result.get("translations", [])
+        if len(translated_payload) != len(subtitles):
+            raise ValueError(f"Expected {len(subtitles)} lines, got {len(translated_payload)}.")
+        translations = {int(item["id"]): str(item["text"]).strip() for item in translated_payload}
+        res_subs = [Subtitle(item.index, item.start, item.end, translations[position]) for position, item in enumerate(subtitles)]
+        return purge_and_enforce_khmer(res_subs, source_language=source_language, openai_key=api_key)
+    except Exception as e:
+        err_str = str(e).lower()
+        if "429" in err_str or "insufficient_quota" in err_str or "credit_balance_exhausted" in err_str or "credits" in err_str:
+            _cfg = load_saved_config()
+            g_key = _cfg.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+            if g_key:
+                st.warning("⚠️ OpenAI credit quota exhausted (Error 429). Automatically completing translation with Google Gemini...")
+                return translate_subtitles_with_gemini(subtitles, source_language, g_key, "gemini-3.1-flash-lite")
+        raise e
 
 
 def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini_key: str, openai_key: str, model_name: str) -> list[Subtitle]:
@@ -986,7 +1002,7 @@ def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini
         if not openai_key:
             openai_key = _cfg.get("openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
 
-    g_model = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-flash-latest"
+    g_model = model_name if (model_name and model_name.startswith("gemini-")) else "gemini-3.1-flash-lite"
     try:
         if gemini_key:
             res = translate_subtitles_with_gemini(subtitles, source_language, gemini_key, g_model)
@@ -995,9 +1011,18 @@ def run_auto_translation(subtitles: list[Subtitle], source_language: str, gemini
         else:
             raise ValueError("No API key configured for auto-translation. Enter a Gemini or OpenAI API key in the sidebar.")
     except Exception as gemini_err:
-        if openai_key:
-            st.info("Gemini was busy, automatically switched to OpenAI GPT-4o Mini.")
-            res = translate_subtitles_with_openai(subtitles, source_language, openai_key)
+        gem_msg = str(gemini_err).lower()
+        if openai_key and not ("429" in gem_msg and "openai" in gem_msg):
+            try:
+                st.info("Gemini was busy, automatically switched to OpenAI GPT-4o Mini.")
+                res = translate_subtitles_with_openai(subtitles, source_language, openai_key)
+            except Exception as oai_err:
+                # If OpenAI also fails (e.g. 429 quota exhausted), retry with other Gemini models
+                if gemini_key:
+                    st.warning("OpenAI credits exhausted. Automatically recovering with Gemini 3.5 Flash Lite...")
+                    res = translate_subtitles_with_gemini(subtitles, source_language, gemini_key, "gemini-3.5-flash-lite")
+                else:
+                    raise oai_err
         else:
             raise gemini_err
 
@@ -1010,22 +1035,29 @@ def transcribe_with_openai(media_path: Path, api_key: str) -> str:
     import httpx
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, http_client=httpx.Client())
-    with media_path.open("rb") as media_file:
-        response = client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
-            file=media_file,
-            response_format="verbose_json",
-            timestamp_granularities=["segment"],
-        )
-    segments = getattr(response, "segments", None) or []
-    if not segments:
-        raise ValueError("OpenAI returned no speech segments.")
-    return render_srt([
-        Subtitle(index, round(segment.start * 1000), round(segment.end * 1000), segment.text.strip())
-        for index, segment in enumerate(segments, 1)
-        if segment.text.strip()
-    ])
+    try:
+        client = OpenAI(api_key=api_key, http_client=httpx.Client())
+        with media_path.open("rb") as media_file:
+            response = client.audio.transcriptions.create(
+                model="gpt-4o-mini-transcribe",
+                file=media_file,
+                response_format="verbose_json",
+                timestamp_granularities=["segment"],
+            )
+        segments = getattr(response, "segments", None) or []
+        if not segments:
+            raise ValueError("OpenAI returned no speech segments.")
+        return render_srt([
+            Subtitle(index, round(segment.start * 1000), round(segment.end * 1000), segment.text.strip())
+            for index, segment in enumerate(segments, 1)
+            if segment.text.strip()
+        ])
+    except Exception as e:
+        err_str = str(e).lower()
+        if "429" in err_str or "insufficient_quota" in err_str or "credit_balance_exhausted" in err_str or "credits" in err_str:
+            st.warning("⚠️ OpenAI credit quota exhausted (Error 429). Automatically transcribing with 100% local Whisper engine...")
+            return transcribe_with_whisper(media_path, "base")
+        raise e
 
 
 _whisper_cache = {}
@@ -1119,7 +1151,7 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
             max_wait -= 1
 
         candidate_models = [model_name]
-        for alt in ["gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]:
+        for alt in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.7-flash", "gemini-3.6-flash"]:
             if alt not in candidate_models:
                 candidate_models.append(alt)
 
@@ -1145,11 +1177,14 @@ def transcribe_media(uploaded_file, model_name: str, api_key: str, media_save_pa
                     break
                 except Exception as error:
                     last_error = error
-                    is_transient = any(m in str(error).upper() for m in ("503", "UNAVAILABLE", "HIGH DEMAND", "RESOURCE_EXHAUSTED", "429"))
+                    err_msg = str(error).upper()
+                    if "404" in err_msg or "NOT_FOUND" in err_msg:
+                        break
+                    is_transient = any(m in err_msg for m in ("503", "UNAVAILABLE", "HIGH DEMAND", "RESOURCE_EXHAUSTED", "429"))
                     if not is_transient:
                         break
                     if attempt < 1:
-                        time.sleep(1.5)
+                        time.sleep(1.0)
             if response and getattr(response, "text", "").strip():
                 break
 
@@ -1755,7 +1790,7 @@ def render_mp3_preview(mp3_path: str):
 def transcribe_one_folder(
     folder_path: str | Path = None,
     output_folder: str | Path = None,
-    model_name: str = "gemini-flash-latest",
+    model_name: str = "gemini-3.1-flash-lite",
     source_language: str = "auto",
     gemini_key: str = "",
     openai_key: str = "",
@@ -2982,16 +3017,17 @@ with st.sidebar:
     pipeline_model = st.selectbox(
         "Speech Transcription Model",
         [
-            "gemini-flash-latest",
             "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
             "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
-            "openai-gpt-4o-mini-transcribe",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
             "base",
             "small",
             "medium",
+            "openai-gpt-4o-mini-transcribe",
         ],
-        help="Gemini and OpenAI models run via cloud API. Whisper ('base', 'small', 'medium') runs 100% locally on CPU/GPU without quota limits.",
+        help="Gemini models run via cloud API. Whisper ('base', 'small', 'medium') runs 100% locally on CPU/GPU without quota limits.",
     )
     
     source_language = st.text_input(
@@ -4260,7 +4296,7 @@ with tab_translate:
                         translated_subs = [Subtitle(s.index, s.start, s.end, ln) for s, ln in zip(source_subs, lines)]
                     elif trans_mode == "Google Gemini API":
                         with st.spinner("Translating with Gemini..."):
-                            g_model = pipeline_model if (pipeline_model and pipeline_model.startswith("gemini-")) else "gemini-flash-latest"
+                            g_model = pipeline_model if (pipeline_model and pipeline_model.startswith("gemini-")) else "gemini-3.1-flash-lite"
                             translated_subs = translate_subtitles_with_gemini(source_subs, source_language, gemini_key, g_model)
                     elif trans_mode == "OpenAI (GPT-4o Mini)":
                         with st.spinner("Translating with GPT-4o Mini..."):
