@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import os
 import re
@@ -14,20 +13,24 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
-# Ensure UTF-8 locale and subprocess settings for Windows
+# Windows UTF-8 and subprocess encoding configuration
 if sys.platform == "win32":
     try:
         import _locale
         _locale._getdefaultlocale = lambda *args: ("en_US", "utf-8")
     except Exception:
         pass
+    # Set WindowsSelectorEventLoopPolicy for robust asyncio without Proactor socket errors
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
-import numpy as np
 import requests
 import streamlit as st
 from pydub import AudioSegment
@@ -39,7 +42,7 @@ st.set_page_config(
     page_title="Dubber AI Pro Studio",
     page_icon="🎙️",
     layout="wide",
-    initial_sidebar_state="auto",
+    initial_sidebar_state="expanded",
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -48,80 +51,135 @@ BASE_STORAGE_DIR = BASE_DIR / ".dubber_input"
 BASE_STORAGE_DIR.mkdir(exist_ok=True)
 FFMPEG_PATH = BASE_DIR / "ffmpeg.exe"
 
+# Configure pydub to use our bundled ffmpeg
+if FFMPEG_PATH.exists():
+    AudioSegment.converter = str(FFMPEG_PATH)
+    AudioSegment.ffprobe = str(FFMPEG_PATH)
+
 # ==========================================
-# Modern Custom CSS Styling
+# Ultra-Modern Glassmorphism UI Styling
 # ==========================================
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Kantumruy+Pro:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Kantumruy+Pro:wght@400;500;600;700&display=swap');
     
-    html, body, [class*="css"] {
-        font-family: 'Inter', 'Kantumruy Pro', sans-serif;
+    * {
+        font-family: 'Inter', 'Kantumruy Pro', -apple-system, sans-serif;
     }
     
     .stApp {
-        background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
-        color: #e6edf3;
+        background: radial-gradient(circle at 15% 20%, rgba(30, 58, 138, 0.15), transparent 40%),
+                    radial-gradient(circle at 85% 80%, rgba(88, 28, 135, 0.15), transparent 40%),
+                    #090d16;
+        color: #f1f5f9;
     }
     
-    .main-header {
-        background: linear-gradient(90deg, #1f2937, #111827);
-        border: 1px solid #374151;
-        border-radius: 14px;
-        padding: 20px 24px;
+    /* Top Hero Header */
+    .studio-hero {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 18px;
+        padding: 24px 28px;
         margin-bottom: 24px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
     }
     
-    .step-card {
-        background: rgba(31, 41, 55, 0.7);
-        backdrop-filter: blur(10px);
-        border: 1px solid #374151;
+    /* Stepper Workflow Cards */
+    .step-nav-bar {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+    }
+    
+    .step-pill {
+        flex: 1;
+        min-width: 170px;
+        background: rgba(30, 41, 59, 0.6);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        transition: all 0.25s ease;
+    }
+    .step-pill.active {
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(124, 58, 237, 0.25));
+        border: 1px solid #3b82f6;
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
+    }
+    .step-pill.completed {
+        border-color: rgba(16, 185, 129, 0.5);
     }
     
-    .step-badge {
-        display: inline-block;
-        font-size: 0.82rem;
+    .step-num {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-weight: 700;
-        text-transform: uppercase;
-        padding: 4px 10px;
-        border-radius: 9999px;
-        letter-spacing: 0.05em;
-        margin-bottom: 8px;
+        font-size: 0.9rem;
     }
-    .badge-step1 { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
-    .badge-step2 { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid #a855f7; }
-    .badge-step3 { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
-    .badge-step4 { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+    .num-1 { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
+    .num-2 { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid #a855f7; }
+    .num-3 { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
+    .num-4 { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+
+    /* Studio Glass Card */
+    .studio-card {
+        background: rgba(17, 24, 39, 0.75);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 22px;
+        margin-bottom: 20px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
     
-    .khmer-text {
-        font-family: 'Kantumruy Pro', sans-serif;
+    .khmer-font {
+        font-family: 'Kantumruy Pro', sans-serif !important;
         font-size: 1.05rem;
         line-height: 1.7;
     }
     
+    /* Modern buttons */
     .stButton>button {
         border-radius: 10px;
         font-weight: 600;
-        transition: all 0.2s ease;
+        letter-spacing: 0.01em;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        padding: 10px 18px;
     }
     .stButton>button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        transform: translateY(-1.5px);
+        box-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
+    }
+    
+    /* Stat Badge */
+    .stat-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        background: rgba(30, 41, 59, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.08);
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-
 # ==========================================
-# Data Models & SRT Utilities
+# Data Models & Subtitle Utilities
 # ==========================================
 @dataclass
 class Subtitle:
@@ -152,8 +210,8 @@ def parse_timestamp_to_ms(ts: str) -> int:
 
 
 def format_ms_to_timestamp(ms: int) -> str:
-    total_sec = ms // 1000
-    rem_ms = ms % 1000
+    total_sec = max(0, ms) // 1000
+    rem_ms = max(0, ms) % 1000
     s = total_sec % 60
     m = (total_sec // 60) % 60
     h = total_sec // 3600
@@ -161,30 +219,29 @@ def format_ms_to_timestamp(ms: int) -> str:
 
 
 def parse_srt(srt_content: str) -> list[Subtitle]:
+    if not srt_content or not srt_content.strip():
+        return []
     subtitles = []
     blocks = re.split(r"\n\s*\n", srt_content.strip())
-    current_index = 1
+    cur_idx = 1
     for block in blocks:
         lines = [line.strip() for line in block.strip().splitlines() if line.strip()]
         if not lines:
             continue
-        
-        # Check if first line is a numeric index
-        idx_offset = 0
-        if lines[0].isdigit():
-            idx_offset = 1
-
+        idx_offset = 1 if lines[0].isdigit() else 0
         if len(lines) > idx_offset and "-->" in lines[idx_offset]:
             timing = lines[idx_offset]
-            text = " ".join(lines[idx_offset + 1:])
+            text = " ".join(lines[idx_offset + 1:]).strip()
             parts = timing.split("-->")
             start_str = parts[0].strip()
             end_str = parts[1].strip()
             s_ms = parse_timestamp_to_ms(start_str)
             e_ms = parse_timestamp_to_ms(end_str)
+            if e_ms <= s_ms:
+                e_ms = s_ms + 2500
             subtitles.append(
                 Subtitle(
-                    index=current_index,
+                    index=cur_idx,
                     start_time=start_str,
                     end_time=end_str,
                     text=text,
@@ -192,19 +249,19 @@ def parse_srt(srt_content: str) -> list[Subtitle]:
                     end_ms=e_ms,
                 )
             )
-            current_index += 1
+            cur_idx += 1
     return subtitles
 
 
 def export_subtitles_to_srt(subtitles: list[Subtitle]) -> str:
-    output = []
+    out = []
     for s in subtitles:
-        output.append(f"{s.index}\n{s.start_time} --> {s.end_time}\n{s.text.strip()}\n")
-    return "\n".join(output)
+        out.append(f"{s.index}\n{s.start_time} --> {s.end_time}\n{s.text.strip()}\n")
+    return "\n".join(out)
 
 
 # ==========================================
-# Config & User Authentication
+# Persistent State & Configuration
 # ==========================================
 def load_config() -> dict:
     if not CONFIG_PATH.exists():
@@ -221,7 +278,7 @@ def save_config(updates: dict):
     try:
         CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
-        st.error(f"Failed to save configuration: {e}")
+        st.error(f"Failed to save config: {e}")
 
 
 def generate_permanent_device_token(username: str, password: str) -> str:
@@ -233,33 +290,32 @@ def generate_permanent_device_token(username: str, password: str) -> str:
 
 
 def init_session():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-        st.session_state.auth_user = ""
-        st.session_state.user_role = "user"
-    if "active_tab" not in st.session_state:
-        st.session_state.active_tab = 0
-    if "original_srt" not in st.session_state:
-        st.session_state.original_srt = ""
-    if "subtitles_orig" not in st.session_state:
-        st.session_state.subtitles_orig = []
-    if "khmer_srt" not in st.session_state:
-        st.session_state.khmer_srt = ""
-    if "subtitles_khmer" not in st.session_state:
-        st.session_state.subtitles_khmer = []
-    if "voiceover_paths" not in st.session_state:
-        st.session_state.voiceover_paths = {}
-    if "rendered_mp3_path" not in st.session_state:
-        st.session_state.rendered_mp3_path = None
-    if "video_duration_ms" not in st.session_state:
-        st.session_state.video_duration_ms = 0
-    if "uploaded_video_path" not in st.session_state:
-        st.session_state.uploaded_video_path = None
+    defaults = {
+        "authenticated": False,
+        "auth_user": "",
+        "user_role": "user",
+        "current_step": 1,
+        "media_path": None,
+        "video_duration_ms": 0,
+        "subtitles_orig": [],
+        "srt_text_orig": "",
+        "subtitles_khmer": [],
+        "srt_text_khmer": "",
+        "voiceover_clips": {},
+        "master_mp3_path": None,
+        "selected_voice": "km-KH-PisethNeural",
+        "selected_speed": "+0%",
+        "selected_pitch": "+0Hz",
+        "auto_pipeline_running": False,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
 
 init_session()
 
-# Auto-Login with Device Token in URL
+# Check Device Token Login
 if not st.session_state.authenticated:
     dev_token = st.query_params.get("device", "")
     if dev_token and "." in dev_token:
@@ -278,204 +334,135 @@ if not st.session_state.authenticated:
             except Exception:
                 pass
 
-
-# Login Gate Screen
+# Authentication Gate
 if not st.session_state.authenticated:
     st.markdown("<br><br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
+    _, col_gate, _ = st.columns([1, 2, 1])
+    with col_gate:
         st.markdown(
             """
-            <div class="step-card" style="text-align: center;">
-                <h2 style="color: #60a5fa; margin-bottom: 4px;">🎙️ Dubber AI Pro Studio</h2>
-                <p style="color: #9ca3af; font-size: 0.95rem; margin-bottom: 20px;">
-                    Fast AI Video Dubbing & Khmer Neural Voice Studio
+            <div class="studio-card" style="text-align: center; padding: 32px 24px;">
+                <div style="font-size: 3rem; margin-bottom: 8px;">🎙️</div>
+                <h2 style="margin: 0; color: #60a5fa; font-weight: 700;">Dubber AI Pro Studio</h2>
+                <p style="color: #94a3b8; font-size: 0.95rem; margin-top: 6px;">
+                    Fast Video Dubbing & High-Precision Khmer TTS Studio
                 </p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        with st.form("login_form"):
-            username = st.text_input("Username / ឈ្មោះគណនី", placeholder="e.g. Thea or admin")
-            password = st.text_input("Password / ពាក្យសម្ងាត់", type="password")
-            submit = st.form_submit_button("🚀 Log In to Studio", use_container_width=True)
-
-            if submit:
+        with st.form("login_modal"):
+            u_in = st.text_input("Username / ឈ្មោះគណនី", placeholder="e.g. Thea, admin")
+            p_in = st.text_input("Password / ពាក្យសម្ងាត់", type="password")
+            btn = st.form_submit_button("🚀 Enter Dubber Studio", use_container_width=True)
+            if btn:
                 cfg = load_config()
                 users = cfg.get("auth_users", {})
-                if username in users and users[username].get("password") == password:
+                if u_in in users and users[u_in].get("password") == p_in:
                     st.session_state.authenticated = True
-                    st.session_state.auth_user = username
-                    st.session_state.user_role = users[username].get("role", "user")
-                    token = generate_permanent_device_token(username, password)
-                    st.query_params["device"] = token
+                    st.session_state.auth_user = u_in
+                    st.session_state.user_role = users[u_in].get("role", "user")
+                    st.query_params["device"] = generate_permanent_device_token(u_in, p_in)
                     st.rerun()
-                elif username == "admin" and password == "dubber123":
+                elif u_in == "admin" and p_in == "dubber123":
                     st.session_state.authenticated = True
                     st.session_state.auth_user = "admin"
                     st.session_state.user_role = "admin"
                     st.rerun()
                 else:
-                    st.error("Invalid credentials. Please verify your username and password.")
+                    st.error("Incorrect username or password.")
     st.stop()
 
 
-# User working directory
-def get_user_dir() -> Path:
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", st.session_state.auth_user.lower()) or "guest"
-    p = BASE_STORAGE_DIR / "users" / safe_name
+def get_user_workspace() -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", st.session_state.auth_user.lower()) or "guest"
+    p = BASE_STORAGE_DIR / "users" / safe
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
-USER_DIR = get_user_dir()
-
-
-# ==========================================
-# Sidebar Settings
-# ==========================================
-with st.sidebar:
-    st.markdown(f"### 👤 {st.session_state.auth_user} ({st.session_state.user_role.upper()})")
-    
-    cfg = load_config()
-    default_gemini_key = cfg.get("gemini_api_key", "")
-    
-    st.markdown("---")
-    st.markdown("#### ⚙️ Studio Settings")
-    
-    gemini_key = st.text_input(
-        "Gemini API Key",
-        value=default_gemini_key,
-        type="password",
-        help="Used for Step 2: High-accuracy Khmer translation",
-    )
-    if gemini_key != default_gemini_key and st.button("Save API Key"):
-        save_config({"gemini_api_key": gemini_key})
-        st.success("API Key saved!")
-
-    whisper_model_choice = st.selectbox(
-        "Whisper STT Model",
-        options=["base", "tiny", "small"],
-        index=0,
-        help="Model for Step 1 Speech-to-Text. 'base' is fast and accurate.",
-    )
-
-    default_voice = st.selectbox(
-        "Default Khmer Neural Voice",
-        options=["km-KH-PisethNeural (ប្រុស - Male)", "km-KH-SreymomNeural (ស្រី - Female)"],
-        index=0,
-    )
-    voice_tag = "km-KH-PisethNeural" if "Piseth" in default_voice else "km-KH-SreymomNeural"
-
-    speech_speed = st.select_slider(
-        "Voice Speed / ល្បឿនសំឡេង",
-        options=["-20%", "-10%", "+0%", "+10%", "+20%", "+30%"],
-        value="+0%",
-    )
-
-    st.markdown("---")
-    current_token = generate_permanent_device_token(st.session_state.auth_user, "user_token")
-    if st.button("📱 Get Mobile Direct Link"):
-        st.info(f"Direct link token: ?device={st.query_params.get('device', current_token)}")
-
-    if st.button("🚪 Logout"):
-        st.session_state.authenticated = False
-        st.session_state.auth_user = ""
-        st.query_params.clear()
-        st.rerun()
+USER_DIR = get_user_workspace()
 
 
 # ==========================================
 # Core Processing Engines
 # ==========================================
 
-# 1. Video/Audio Extraction & Whisper Transcribe
+# 1. Media Extraction & Whisper STT
 @st.cache_resource
-def load_whisper_engine(model_name: str):
+def get_whisper_engine(model_name: str):
     import whisper
     return whisper.load_model(model_name)
 
 
-def extract_audio_from_video(video_path: Path, output_wav: Path) -> float:
-    """Extract 16kHz mono WAV from video using FFmpeg and return duration in seconds."""
+def extract_audio(video_file: Path, out_wav: Path) -> float:
     cmd = [
         str(FFMPEG_PATH if FFMPEG_PATH.exists() else "ffmpeg"),
         "-y",
-        "-i", str(video_path),
+        "-i", str(video_file),
         "-vn",
         "-acodec", "pcm_s16le",
         "-ar", "16000",
         "-ac", "1",
-        str(output_wav),
+        str(out_wav),
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    
-    # Get duration
     try:
-        from pydub import AudioSegment
-        seg = AudioSegment.from_file(output_wav)
+        seg = AudioSegment.from_file(out_wav)
         return len(seg) / 1000.0
     except Exception:
         return 0.0
 
 
-def transcribe_media_to_srt(media_path: Path, model_name: str = "base", progress_bar=None) -> list[Subtitle]:
-    """Step 1: Extract audio and transcribe to standard SRT subtitles using Whisper."""
-    wav_path = USER_DIR / "temp_input_audio.wav"
-    
-    if progress_bar:
-        progress_bar.progress(15, text="Extracting audio stream with FFmpeg...")
-    
-    duration_sec = extract_audio_from_video(media_path, wav_path)
+def run_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_status=None) -> list[Subtitle]:
+    wav_path = USER_DIR / "extracted_audio.wav"
+    if p_status: p_status.text("⚡ Extracting audio stream with FFmpeg...")
+    if p_bar: p_bar.progress(15)
+
+    duration_sec = extract_audio(file_path, wav_path)
     st.session_state.video_duration_ms = int(duration_sec * 1000)
 
-    if progress_bar:
-        progress_bar.progress(35, text=f"Loading Whisper STT ({model_name})...")
-        
-    model = load_whisper_engine(model_name)
+    if p_status: p_status.text(f"🧠 Running Whisper ({model_name}) speech recognition...")
+    if p_bar: p_bar.progress(40)
 
-    if progress_bar:
-        progress_bar.progress(60, text="Running speech-to-text recognition...")
+    engine = get_whisper_engine(model_name)
+    res = engine.transcribe(str(wav_path), fp16=False)
+    raw_segs = res.get("segments", [])
 
-    result = model.transcribe(str(wav_path), fp16=False)
-    raw_segments = result.get("segments", [])
-
+    if p_bar: p_bar.progress(85)
     subtitles = []
-    for idx, seg in enumerate(raw_segments, start=1):
-        s_sec = float(seg["start"])
-        e_sec = float(seg["end"])
-        text = str(seg["text"]).strip()
-        if not text:
+    for idx, seg in enumerate(raw_segs, start=1):
+        txt = str(seg.get("text", "")).strip()
+        if not txt:
             continue
-        s_ms = int(round(s_sec * 1000))
-        e_ms = int(round(e_sec * 1000))
+        s_ms = int(round(float(seg["start"]) * 1000))
+        e_ms = int(round(float(seg["end"]) * 1000))
         subtitles.append(
             Subtitle(
                 index=idx,
                 start_time=format_ms_to_timestamp(s_ms),
                 end_time=format_ms_to_timestamp(e_ms),
-                text=text,
+                text=txt,
                 start_ms=s_ms,
                 end_ms=e_ms,
             )
         )
+    if p_bar: p_bar.progress(100)
     return subtitles
 
 
-# 2. Translate SRT to Natural Khmer
-def translate_subtitles_to_khmer(subtitles: list[Subtitle], api_key: str, progress_bar=None) -> list[Subtitle]:
-    """Step 2: Translate SRT subtitles into natural Khmer using Gemini Flash with strict rules."""
+# 2. Translate SRT to Pure Khmer (with Multi-Model Retry)
+def translate_subtitles_khmer(subtitles: list[Subtitle], api_key: str, p_bar=None, p_status=None) -> list[Subtitle]:
     if not api_key:
-        raise ValueError("Gemini API key is required. Please enter it in the sidebar.")
+        raise ValueError("Please provide a valid Gemini API Key in the sidebar.")
 
     from google import genai
     client = genai.Client(api_key=api_key)
 
-    total_subs = len(subtitles)
-    batch_size = 25
-    khmer_subtitles = []
-    
-    fallback_models = [
+    total = len(subtitles)
+    batch_size = 20
+    khmer_list = []
+    models_to_try = [
         "gemini-3.1-flash-lite",
         "gemini-flash-lite-latest",
         "gemini-3.7-flash",
@@ -483,120 +470,111 @@ def translate_subtitles_to_khmer(subtitles: list[Subtitle], api_key: str, progre
         "gemini-3.5-flash",
     ]
 
-    for batch_idx in range(0, total_subs, batch_size):
-        chunk = subtitles[batch_idx : batch_idx + batch_size]
-        items_payload = [{"id": s.index, "text": s.text} for s in chunk]
+    for b_idx in range(0, total, batch_size):
+        chunk = subtitles[b_idx : b_idx + batch_size]
+        payload = [{"id": s.index, "text": s.text} for s in chunk]
         
         prompt = (
-            "You are a master Khmer audiovisual translator. Translate these subtitle lines into 100% natural, fluent Khmer (ភាសាខ្មែរ).\n"
-            "MANDATORY REQUIREMENTS:\n"
-            "1. ONLY PURE KHMER SCRIPT: Absolutely no Thai script, Vietnamese, or foreign text allowed.\n"
-            "2. Natural spoken flow: Use conversational Khmer suitable for voice-over dubbing.\n"
-            "3. Keep exact IDs: Return strictly a valid JSON array of objects with 'id' and 'text'.\n\n"
-            f"Input lines:\n{json.dumps(items_payload, ensure_ascii=False)}"
+            "You are a professional audiovisual translator. Translate these subtitle lines into 100% natural, fluent Khmer (ភាសាខ្មែរ).\n"
+            "STRICT RULES:\n"
+            "1. ONLY KHMER SCRIPT: Do not output any Thai, Chinese, or Latin script words.\n"
+            "2. Natural dialogue: Translate idioms and context into spoken Khmer suitable for dubbing.\n"
+            "3. Format: Return STRICTLY a valid JSON array of objects with 'id' and 'text'.\n\n"
+            f"Input subtitles:\n{json.dumps(payload, ensure_ascii=False)}"
         )
 
-        translated_batch = None
-        for model_name in fallback_models:
+        translated_map = {}
+        for m in models_to_try:
             try:
                 resp = client.models.generate_content(
-                    model=model_name,
+                    model=m,
                     contents=prompt,
                     config={"response_mime_type": "application/json"},
                 )
-                text_resp = resp.text.strip()
-                # Parse JSON
-                data = json.loads(text_resp)
+                data = json.loads(resp.text.strip())
                 if isinstance(data, list) and len(data) > 0:
-                    translated_batch = {int(item["id"]): str(item["text"]).strip() for item in data if "id" in item and "text" in item}
+                    translated_map = {int(item["id"]): str(item["text"]).strip() for item in data if "id" in item and "text" in item}
                     break
-            except Exception as e:
-                err = str(e).lower()
-                if "429" in err or "quota" in err or "rate" in err:
-                    time.sleep(1.5)
+            except Exception:
+                time.sleep(1.0)
                 continue
 
-        if not translated_batch:
-            # Fallback direct line preservation if API limits exhausted
-            translated_batch = {s.index: s.text for s in chunk}
-
         for s in chunk:
-            khmer_text = translated_batch.get(s.index, s.text)
-            # Filter any stray Thai unicode characters if any
-            khmer_text = re.sub(r"[\u0E00-\u0E7F]+", "", khmer_text).strip() or s.text
-            khmer_subtitles.append(
+            khmer_txt = translated_map.get(s.index, s.text)
+            # Remove any unwanted non-Khmer script bleed (Thai Unicode \u0E00-\u0E7F)
+            khmer_txt = re.sub(r"[\u0E00-\u0E7F]+", "", khmer_txt).strip() or s.text
+            khmer_list.append(
                 Subtitle(
                     index=s.index,
                     start_time=s.start_time,
                     end_time=s.end_time,
-                    text=khmer_text,
+                    text=khmer_txt,
                     start_ms=s.start_ms,
                     end_ms=s.end_ms,
                 )
             )
 
-        if progress_bar:
-            pct = int(min(100, (batch_idx + len(chunk)) / total_subs * 100))
-            progress_bar.progress(pct, text=f"Translated {min(batch_idx + len(chunk), total_subs)}/{total_subs} lines to Khmer...")
+        if p_bar:
+            p_bar.progress(int(min(100, (b_idx + len(chunk)) / total * 100)))
+        if p_status:
+            p_status.text(f"Translating to Khmer: {min(b_idx + len(chunk), total)}/{total} lines...")
 
-    return khmer_subtitles
+    return khmer_list
 
 
-# 3. Generate Voice-Over TTS with Infinite / Multi-Tier Retry
-async def synthesize_single_line_edge(text: str, voice: str, rate: str, pitch: str, out_file: Path):
+# 3. Robust Voice-Over TTS Synthesis (With Infinite Retry & Isolated Event Loop)
+def synthesize_line_isolated_loop(text: str, voice: str, rate: str, pitch: str, out_file: Path) -> bool:
+    """Safely runs edge-tts inside a clean, isolated event loop on Windows."""
     import edge_tts
-    comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    await comm.save(str(out_file))
 
+    async def _async_task():
+        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+        await comm.save(str(out_file))
 
-def synthesize_line_with_retry(
-    text: str,
-    voice: str,
-    rate: str,
-    pitch: str,
-    out_file: Path,
-    max_retries: int = 5,
-) -> bool:
-    """Step 3 Engine: Robust TTS generator with exponential backoff & gTTS fallback.
-    Never gives up until valid audio is produced.
-    """
-    clean_text = text.strip()
-    if not clean_text:
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_async_task())
+        return out_file.exists() and out_file.stat().st_size > 500
+    except Exception:
         return False
-
-    # Attempt 1-5: Microsoft Edge Neural TTS with backoff
-    for attempt in range(1, max_retries + 1):
+    finally:
         try:
-            if out_file.exists():
-                out_file.unlink()
-
-            # Run async edge-tts
-            asyncio.run(synthesize_single_line_edge(clean_text, voice, rate, pitch, out_file))
-
-            if out_file.exists() and out_file.stat().st_size > 500:
-                return True
+            loop.close()
         except Exception:
             pass
 
-        # Exponential backoff
-        time.sleep(0.4 * attempt)
 
-    # Attempt 6-8: Fallback to Google Translate Khmer TTS (gTTS)
-    for attempt in range(1, 4):
-        try:
-            from gtts import gTTS
-            tts = gTTS(text=clean_text, lang="km")
-            tts.save(str(out_file))
-            if out_file.exists() and out_file.stat().st_size > 500:
-                return True
-        except Exception:
-            time.sleep(0.5 * attempt)
+def generate_tts_clip_with_resilience(text: str, voice: str, rate: str, pitch: str, out_file: Path, max_retries: int = 5) -> bool:
+    """Robust multi-tier retry mechanism: 'when can't generate voice-over please try do it'."""
+    clean = text.strip()
+    if not clean:
+        return False
 
-    # Attempt 9: Clean punctuation and retry Edge-TTS once more
+    # Tier 1: Microsoft Edge Neural TTS with exponential backoff
+    for attempt in range(1, max_retries + 1):
+        if out_file.exists():
+            out_file.unlink()
+        ok = synthesize_line_isolated_loop(clean, voice, rate, pitch, out_file)
+        if ok:
+            return True
+        time.sleep(0.3 * attempt)
+
+    # Tier 2: Google Translate Khmer TTS Fallback
     try:
-        sanitized = re.sub(r"[^\w\s\u1780-\u17FF]", " ", clean_text).strip()
-        asyncio.run(synthesize_single_line_edge(sanitized, voice, "+0%", "+0Hz", out_file))
-        if out_file.exists() and out_file.stat().st_size > 300:
+        from gtts import gTTS
+        tts = gTTS(text=clean, lang="km")
+        tts.save(str(out_file))
+        if out_file.exists() and out_file.stat().st_size > 500:
+            return True
+    except Exception:
+        pass
+
+    # Tier 3: Sanitized punctuation retry
+    try:
+        sanitized = re.sub(r"[^\w\s\u1780-\u17FF]", " ", clean).strip()
+        ok = synthesize_line_isolated_loop(sanitized, voice, "+0%", "+0Hz", out_file)
+        if ok:
             return True
     except Exception:
         pass
@@ -604,142 +582,175 @@ def synthesize_line_with_retry(
     return False
 
 
-def generate_all_voiceover_clips(
-    subtitles: list[Subtitle],
-    voice: str = "km-KH-PisethNeural",
-    rate: str = "+0%",
-    pitch: str = "+0Hz",
-    progress_bar=None,
-    status_text=None,
-) -> dict[int, Path]:
-    """Generates TTS audio clips for each subtitle line, storing in user's tts cache."""
+def generate_all_tts(subtitles: list[Subtitle], voice: str, rate: str, pitch: str, p_bar=None, p_status=None) -> dict[int, str]:
     tts_dir = USER_DIR / "tts_cache"
     tts_dir.mkdir(exist_ok=True)
     
     total = len(subtitles)
     audio_map = {}
-    failed_lines = []
+    failed = []
 
-    for i, s in enumerate(subtitles, start=1):
-        clip_path = tts_dir / f"line_{s.index}_{voice.split('-')[2] if '-' in voice else 'voice'}.mp3"
-        
-        # Check if already generated and valid
-        if clip_path.exists() and clip_path.stat().st_size > 500:
-            audio_map[s.index] = clip_path
+    for idx, s in enumerate(subtitles, start=1):
+        voice_tag = "piseth" if "piseth" in voice.lower() else "sreymom"
+        clip_p = tts_dir / f"line_{s.index}_{voice_tag}.mp3"
+
+        if clip_p.exists() and clip_p.stat().st_size > 500:
+            audio_map[s.index] = str(clip_p)
         else:
-            if status_text:
-                status_text.text(f"🎙️ Generating voice line {i}/{total}...")
+            if p_status:
+                p_status.text(f"🎙️ Voicing line {idx}/{total}: {s.text[:30]}...")
             
-            success = synthesize_line_with_retry(s.text, voice, rate, pitch, clip_path)
+            success = generate_tts_clip_with_resilience(s.text, voice, rate, pitch, clip_p)
             if success:
-                audio_map[s.index] = clip_path
+                audio_map[s.index] = str(clip_p)
             else:
-                failed_lines.append(s.index)
+                failed.append(s.index)
 
-        if progress_bar:
-            progress_bar.progress(int(i / total * 100))
+        if p_bar:
+            p_bar.progress(int(idx / total * 100))
 
-    if failed_lines:
-        st.warning(f"Note: {len(failed_lines)} line(s) required multiple retries: {failed_lines}")
-    
+    if failed:
+        st.warning(f"⚠️ {len(failed)} line(s) required recovery: lines {failed}")
     return audio_map
 
 
 # 4. Render Master MP3 Audio
-def render_master_mp3(
+def render_dubbed_mp3(
     subtitles: list[Subtitle],
-    audio_map: dict[int, Path],
-    total_duration_ms: int = 0,
+    audio_map: dict[int, str],
+    video_dur_ms: int = 0,
     bgm_path: Optional[Path] = None,
-    bgm_volume_db: float = -18.0,
-    progress_bar=None,
+    bgm_vol_db: float = -18.0,
+    p_bar=None,
+    p_status=None,
 ) -> Path:
-    """Step 4: Composite each voice-over segment at its exact timestamp into a single master MP3."""
     if not subtitles or not audio_map:
-        raise ValueError("No subtitles or voice clips available to render.")
+        raise ValueError("Missing subtitles or voiced clips to render.")
 
-    # Calculate overall audio duration
-    max_sub_end = max(s.end_ms for s in subtitles) if subtitles else 0
-    canvas_duration = max(total_duration_ms, max_sub_end + 1500)
+    max_end = max(s.end_ms for s in subtitles) if subtitles else 0
+    total_len = max(video_dur_ms, max_end + 1000)
 
-    if progress_bar:
-        progress_bar.progress(10, text="Initializing silent timeline canvas...")
+    if p_status: p_status.text("🎼 Initializing silent audio timeline...")
+    if p_bar: p_bar.progress(10)
 
-    # Create silent timeline base
-    master_audio = AudioSegment.silent(duration=canvas_duration)
+    timeline = AudioSegment.silent(duration=total_len)
 
     total_subs = len(subtitles)
     for idx, s in enumerate(subtitles):
-        clip_path = audio_map.get(s.index)
-        if clip_path and clip_path.exists():
+        clip_str = audio_map.get(s.index)
+        if clip_str and Path(clip_str).exists():
             try:
-                clip = AudioSegment.from_file(clip_path)
-                # Overlay at subtitle start_ms
-                master_audio = master_audio.overlay(clip, position=s.start_ms)
+                clip = AudioSegment.from_file(clip_str)
+                timeline = timeline.overlay(clip, position=s.start_ms)
             except Exception:
                 pass
-        
-        if progress_bar:
-            pct = 10 + int(70 * (idx + 1) / total_subs)
-            progress_bar.progress(pct, text=f"Stitching voice clip {idx+1}/{total_subs} at {s.start_time}...")
+        if p_bar:
+            p_bar.progress(10 + int(70 * (idx + 1) / total_subs))
 
-    # Overlay Background Music if provided
+    # Background Music Blending
     if bgm_path and bgm_path.exists():
-        if progress_bar:
-            progress_bar.progress(85, text="Blending background music...")
+        if p_status: p_status.text("🎶 Blending background music track...")
         try:
-            bgm = AudioSegment.from_file(bgm_path)
-            # Adjust BGM volume
-            bgm = bgm + bgm_volume_db
-            
-            # Loop BGM if shorter than timeline
-            if len(bgm) < canvas_duration:
-                repeats = (canvas_duration // len(bgm)) + 1
-                bgm = (bgm * repeats)[:canvas_duration]
+            bgm = AudioSegment.from_file(bgm_path) + bgm_vol_db
+            if len(bgm) < total_len:
+                loops = (total_len // len(bgm)) + 1
+                bgm = (bgm * loops)[:total_len]
             else:
-                bgm = bgm[:canvas_duration]
-
-            # Add subtle fade out at the end
-            bgm = bgm.fade_out(2000)
-            master_audio = master_audio.overlay(bgm, position=0)
+                bgm = bgm[:total_len]
+            bgm = bgm.fade_out(1500)
+            timeline = timeline.overlay(bgm, position=0)
         except Exception as e:
-            st.warning(f"Could not blend BGM: {e}")
+            st.warning(f"BGM blend error: {e}")
 
-    # Export final master MP3
-    out_mp3_path = USER_DIR / f"dubbed_master_{int(time.time())}.mp3"
-    if progress_bar:
-        progress_bar.progress(95, text="Exporting final master MP3 (192 kbps)...")
+    out_file = USER_DIR / f"master_voiceover_{int(time.time())}.mp3"
+    if p_status: p_status.text("📦 Exporting master 192kbps MP3...")
+    if p_bar: p_bar.progress(95)
 
-    master_audio.export(str(out_mp3_path), format="mp3", bitrate="192k")
+    timeline.export(str(out_file), format="mp3", bitrate="192k")
+    if p_bar: p_bar.progress(100)
+    return out_file
+
+
+# ==========================================
+# Sidebar Configuration
+# ==========================================
+with st.sidebar:
+    st.markdown(
+        f"""
+        <div style="background: rgba(30, 41, 59, 0.7); border-radius: 12px; padding: 14px; border: 1px solid rgba(255,255,255,0.08); margin-bottom: 16px;">
+            <div style="font-size: 0.85rem; color: #94a3b8;">Logged in as</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #60a5fa;">{st.session_state.auth_user}</div>
+            <div style="font-size: 0.75rem; color: #34d399; font-weight: 600; text-transform: uppercase;">● {st.session_state.user_role}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cfg = load_config()
+    current_key = cfg.get("gemini_api_key", "")
     
-    if progress_bar:
-        progress_bar.progress(100, text="Render complete!")
+    st.markdown("#### ⚙️ AI Engine Settings")
+    input_key = st.text_input("Gemini API Key", value=current_key, type="password", help="For Step 2: High-accuracy Khmer translation")
+    if input_key != current_key:
+        if st.button("💾 Save Key", use_container_width=True):
+            save_config({"gemini_api_key": input_key})
+            st.success("API key saved!")
+            st.rerun()
 
-    return out_mp3_path
+    whisper_model = st.selectbox("Whisper STT Accuracy", options=["base", "tiny", "small"], index=0)
+
+    st.markdown("#### 🎙️ Voice Settings")
+    voice_choice = st.selectbox(
+        "Khmer Neural Voice",
+        options=["km-KH-PisethNeural (ប្រុស - Male)", "km-KH-SreymomNeural (ស្រី - Female)"],
+        index=0 if "piseth" in st.session_state.selected_voice.lower() else 1,
+    )
+    st.session_state.selected_voice = "km-KH-PisethNeural" if "Piseth" in voice_choice else "km-KH-SreymomNeural"
+
+    st.session_state.selected_speed = st.select_slider(
+        "Voice Speed",
+        options=["-20%", "-10%", "+0%", "+10%", "+20%", "+30%"],
+        value=st.session_state.selected_speed,
+    )
+
+    st.markdown("---")
+    c_btn1, c_btn2 = st.columns(2)
+    with c_btn1:
+        if st.button("🔄 Reset Flow", use_container_width=True):
+            st.session_state.subtitles_orig = []
+            st.session_state.srt_text_orig = ""
+            st.session_state.subtitles_khmer = []
+            st.session_state.srt_text_khmer = ""
+            st.session_state.voiceover_clips = {}
+            st.session_state.master_mp3_path = None
+            st.session_state.current_step = 1
+            st.rerun()
+    with c_btn2:
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.query_params.clear()
+            st.rerun()
 
 
 # ==========================================
-# Main Studio Layout & 4-Step Navigation
+# Studio Header & Stepper Navigation Bar
 # ==========================================
-
-# Top Banner
 st.markdown(
     f"""
-    <div class="main-header">
+    <div class="studio-hero">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
             <div>
-                <h1 style="font-size: 1.8rem; font-weight: 700; margin: 0; color: #f9fafb;">
+                <h1 style="font-size: 1.85rem; font-weight: 800; margin: 0; background: linear-gradient(90deg, #60a5fa, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
                     🎙️ Dubber AI Pro Studio
                 </h1>
-                <p style="color: #9ca3af; margin: 4px 0 0 0; font-size: 0.95rem;">
-                    Video $\\rightarrow$ SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ Robust TTS $\\rightarrow$ Master MP3
+                <p style="color: #94a3b8; font-size: 0.95rem; margin: 6px 0 0 0;">
+                    Video to SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ Neural Voice-Over $\\rightarrow$ Master MP3
                 </p>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
-                <span class="step-badge badge-step1">1. Video $\\rightarrow$ SRT</span>
-                <span class="step-badge badge-step2">2. SRT $\\rightarrow$ Khmer</span>
-                <span class="step-badge badge-step3">3. Voice-Over TTS</span>
-                <span class="step-badge badge-step4">4. Render MP3</span>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <span class="stat-badge">📝 {len(st.session_state.subtitles_orig)} Lines</span>
+                <span class="stat-badge">🎙️ {len(st.session_state.voiceover_clips)} Voiced</span>
+                <span class="stat-badge">⏱️ {st.session_state.video_duration_ms // 1000}s</span>
             </div>
         </div>
     </div>
@@ -747,356 +758,409 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Tab Navigation
-tabs = st.tabs([
+# Step Indicator Pills
+c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+with c_p1:
+    act = "active" if st.session_state.current_step == 1 else ("completed" if st.session_state.subtitles_orig else "")
+    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-1'>1</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 1</div><div style='font-weight:700;'>Transcribe SRT</div></div></div>", unsafe_allow_html=True)
+with c_p2:
+    act = "active" if st.session_state.current_step == 2 else ("completed" if st.session_state.subtitles_khmer else "")
+    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-2'>2</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 2</div><div style='font-weight:700;'>Translate Khmer</div></div></div>", unsafe_allow_html=True)
+with c_p3:
+    act = "active" if st.session_state.current_step == 3 else ("completed" if st.session_state.voiceover_clips else "")
+    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-3'>3</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 3</div><div style='font-weight:700;'>Voice-Over TTS</div></div></div>", unsafe_allow_html=True)
+with c_p4:
+    act = "active" if st.session_state.current_step == 4 else ("completed" if st.session_state.master_mp3_path else "")
+    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-4'>4</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 4</div><div style='font-weight:700;'>Render MP3</div></div></div>", unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# Main Studio Tabs
+tab_auto, tab1, tab2, tab3, tab4 = st.tabs([
     "⚡ 1-Click Auto Pipeline",
     "1️⃣ Transcribe Video $\\rightarrow$ SRT",
     "2️⃣ Translate SRT $\\rightarrow$ Khmer",
-    "3️⃣ Generate Voice-Over TTS",
+    "3️⃣ Voice-Over TTS (Auto-Retry)",
     "4️⃣ Render Master MP3",
 ])
 
-# ----------------------------------------------------
-# TAB 0: 1-Click Auto Pipeline
-# ----------------------------------------------------
-with tabs[0]:
-    st.markdown("### ⚡ Full Automated Pipeline")
-    st.caption("Upload your video or audio file below. The system will automatically execute all 4 steps: transcribe, translate to Khmer, synthesize neural voice-over, and render the final MP3.")
-    
-    col_u, col_opt = st.columns([3, 2])
-    with col_u:
-        auto_media = st.file_uploader(
+# ---------------------------------------------------------------------
+# ⚡ 1-CLICK AUTO PIPELINE
+# ---------------------------------------------------------------------
+with tab_auto:
+    st.markdown(
+        """
+        <div class="studio-card">
+            <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Hands-Free Pipeline</h3>
+            <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will automatically run all 4 steps and render your final Khmer MP3 voice-over.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c_au1, c_au2 = st.columns([3, 2])
+    with c_au1:
+        auto_file = st.file_uploader(
             "Select Video or Audio File",
             type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
-            key="auto_upload",
+            key="auto_pipe_file",
         )
-    with col_opt:
-        st.markdown("**Voice Configuration**")
-        st.write(f"Voice: **{default_voice}**")
-        st.write(f"Speed: **{speech_speed}**")
-        st.write(f"STT Model: **Whisper {whisper_model_choice}**")
-        auto_bgm = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="auto_bgm")
+    with c_au2:
+        auto_bgm_file = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="auto_pipe_bgm")
+        st.caption(f"Active Voice: **{st.session_state.selected_voice}** | Speed: **{st.session_state.selected_speed}**")
 
-    if auto_media:
-        if st.button("🚀 Start 1-Click Full Dubbing Pipeline", type="primary", use_container_width=True):
-            saved_media = USER_DIR / f"input_media_{int(time.time())}{Path(auto_media.name).suffix}"
-            saved_media.write_bytes(auto_media.getbuffer())
-            st.session_state.uploaded_video_path = saved_media
+    if auto_file:
+        if st.button("🚀 Run 1-Click Dubbing Pipeline Now", type="primary", use_container_width=True):
+            saved = USER_DIR / f"auto_in_{int(time.time())}{Path(auto_file.name).suffix}"
+            saved.write_bytes(auto_file.getbuffer())
+            st.session_state.media_path = saved
 
-            bgm_saved = None
-            if auto_bgm:
-                bgm_saved = USER_DIR / f"bgm_{int(time.time())}.mp3"
-                bgm_saved.write_bytes(auto_bgm.getbuffer())
+            bgm_p = None
+            if auto_bgm_file:
+                bgm_p = USER_DIR / f"bgm_{int(time.time())}.mp3"
+                bgm_p.write_bytes(auto_bgm_file.getbuffer())
 
-            prog_box = st.status("🎬 Processing Auto Pipeline...", expanded=True)
+            status_box = st.status("🎬 Running Full Pipeline...", expanded=True)
             p_bar = st.progress(5)
 
             try:
                 # Step 1
-                prog_box.write("📌 **Step 1/4**: Extracting audio & transcribing with Whisper...")
-                subs_orig = transcribe_media_to_srt(saved_media, whisper_model_choice, p_bar)
-                st.session_state.subtitles_orig = subs_orig
-                st.session_state.original_srt = export_subtitles_to_srt(subs_orig)
-                prog_box.write(f"✓ Transcribed **{len(subs_orig)}** lines.")
+                status_box.write("📌 **Step 1/4**: Transcribing audio with Whisper AI...")
+                subs1 = run_transcription(saved, whisper_model, p_bar)
+                st.session_state.subtitles_orig = subs1
+                st.session_state.srt_text_orig = export_subtitles_to_srt(subs1)
+                status_box.write(f"✓ Step 1 Complete: {len(subs1)} lines transcribed.")
 
                 # Step 2
-                prog_box.write("🇰🇭 **Step 2/4**: Translating subtitles to natural Khmer...")
-                subs_khmer = translate_subtitles_to_khmer(subs_orig, gemini_key, p_bar)
-                st.session_state.subtitles_khmer = subs_khmer
-                st.session_state.khmer_srt = export_subtitles_to_srt(subs_khmer)
-                prog_box.write(f"✓ Translated **{len(subs_khmer)}** lines to Khmer.")
+                status_box.write("🇰🇭 **Step 2/4**: Translating to natural Khmer dialogue...")
+                subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
+                st.session_state.subtitles_khmer = subs2
+                st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
+                status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated to Khmer.")
 
                 # Step 3
-                prog_box.write("🎙️ **Step 3/4**: Synthesizing neural voice-over (auto-retry active)...")
-                audio_map = generate_all_voiceover_clips(subs_khmer, voice_tag, speech_speed, "+0Hz", p_bar)
-                st.session_state.voiceover_paths = audio_map
-                prog_box.write(f"✓ Generated **{len(audio_map)}** voice-over clips.")
+                status_box.write("🎙️ **Step 3/4**: Synthesizing neural voice-over (infinite retry active)...")
+                clips = generate_all_tts(
+                    subs2,
+                    st.session_state.selected_voice,
+                    st.session_state.selected_speed,
+                    st.session_state.selected_pitch,
+                    p_bar,
+                )
+                st.session_state.voiceover_clips = clips
+                status_box.write(f"✓ Step 3 Complete: {len(clips)} lines synthesized.")
 
                 # Step 4
-                prog_box.write("🎵 **Step 4/4**: Rendering final master MP3 audio...")
-                final_mp3 = render_master_mp3(
-                    subs_khmer,
-                    audio_map,
+                status_box.write("🎧 **Step 4/4**: Rendering master MP3 audio track...")
+                final_out = render_dubbed_mp3(
+                    subs2,
+                    clips,
                     st.session_state.video_duration_ms,
-                    bgm_saved,
+                    bgm_p,
                     -18.0,
                     p_bar,
                 )
-                st.session_state.rendered_mp3_path = final_mp3
-                prog_box.update(label="🎉 Pipeline Completed Successfully!", state="complete")
-                p_bar.progress(100)
-
+                st.session_state.master_mp3_path = str(final_out)
+                st.session_state.current_step = 4
+                status_box.update(label="🎉 Full Pipeline Complete!", state="complete")
                 st.balloons()
-            except Exception as ex:
-                prog_box.update(label=f"❌ Error: {ex}", state="error")
-                st.error(f"Execution stopped: {ex}")
+            except Exception as e:
+                status_box.update(label=f"❌ Error: {e}", state="error")
+                st.error(f"Pipeline stopped: {e}")
 
-    if st.session_state.rendered_mp3_path and Path(st.session_state.rendered_mp3_path).exists():
-        mp3_file = Path(st.session_state.rendered_mp3_path)
-        st.markdown("---")
-        st.markdown("### 🎧 Master Dubbed MP3 Audio")
-        st.audio(str(mp3_file))
-        
-        mp3_data = mp3_file.read_bytes()
+    if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
+        mp3_obj = Path(st.session_state.master_mp3_path)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="studio-card" style="border-color: rgba(16, 185, 129, 0.4);">
+                <h3 style="margin-top:0; color:#34d399;">🎧 Master Dubbed MP3 Ready!</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.audio(str(mp3_obj))
         st.download_button(
             label="⬇️ Download Dubbed MP3 File",
-            data=mp3_data,
-            file_name=f"dubbed_khmer_{mp3_file.name}",
+            data=mp3_obj.read_bytes(),
+            file_name=f"dubbed_khmer_{mp3_obj.name}",
             mime="audio/mp3",
             type="primary",
             use_container_width=True,
         )
 
 
-# ----------------------------------------------------
-# TAB 1: Transcribe Video -> SRT
-# ----------------------------------------------------
-with tabs[1]:
+# ---------------------------------------------------------------------
+# TAB 1: TRANSCRIBE VIDEO -> SRT
+# ---------------------------------------------------------------------
+with tab1:
     st.markdown("### 1️⃣ Transcribe Video to SRT")
-    st.caption("Upload a video or audio file to generate standard SRT subtitles with accurate timestamps.")
+    st.caption("Upload your video/audio file to automatically extract speech and generate standard SRT subtitles.")
 
-    col1, col2 = st.columns([3, 2])
-    with col1:
-        step1_file = st.file_uploader(
-            "Upload Video / Audio File",
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        step1_uploader = st.file_uploader(
+            "Upload Video or Audio",
             type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
-            key="step1_uploader",
+            key="step1_file",
         )
-    with col2:
-        st.markdown("**Whisper Options**")
-        st.info(f"Model: `{whisper_model_choice}`\n\nAuto-detects spoken language (English, Chinese, Thai, etc.).")
+    with c2:
+        st.markdown("**Transcription Settings**")
+        st.info(f"Model: **Whisper {whisper_model}**\n\nSupports auto-detection for English, Chinese, Thai, and 90+ languages.")
 
-    if step1_file:
-        if st.button("🎙️ Transcribe Media to SRT", type="primary", use_container_width=True):
-            target_path = USER_DIR / f"upload_{int(time.time())}{Path(step1_file.name).suffix}"
-            target_path.write_bytes(step1_file.getbuffer())
-            st.session_state.uploaded_video_path = target_path
+    if step1_uploader:
+        if st.button("🎙️ Transcribe Media File to SRT", type="primary", use_container_width=True):
+            tgt = USER_DIR / f"input_{int(time.time())}{Path(step1_uploader.name).suffix}"
+            tgt.write_bytes(step1_uploader.getbuffer())
+            st.session_state.media_path = tgt
 
             bar = st.progress(0)
-            with st.spinner("Extracting audio & running Whisper transcription..."):
+            status_t = st.empty()
+            with st.spinner("Extracting audio and transcribing speech..."):
                 try:
-                    subs = transcribe_media_to_srt(target_path, whisper_model_choice, bar)
+                    subs = run_transcription(tgt, whisper_model, bar, status_t)
                     st.session_state.subtitles_orig = subs
-                    st.session_state.original_srt = export_subtitles_to_srt(subs)
-                    st.success(f"Successfully transcribed {len(subs)} subtitle lines!")
-                except Exception as e:
-                    st.error(f"Transcription failed: {e}")
+                    st.session_state.srt_text_orig = export_subtitles_to_srt(subs)
+                    st.session_state.current_step = 2
+                    st.success(f"✓ Transcribed {len(subs)} lines successfully!")
+                except Exception as ex:
+                    st.error(f"Transcription error: {ex}")
 
-    if st.session_state.original_srt:
-        st.markdown("#### 📜 Transcribed Subtitles (Original)")
-        edited_srt = st.text_area(
-            "Original SRT Subtitle Editor",
-            value=st.session_state.original_srt,
-            height=260,
-        )
-        if edited_srt != st.session_state.original_srt:
-            st.session_state.original_srt = edited_srt
-            st.session_state.subtitles_orig = parse_srt(edited_srt)
+    if st.session_state.srt_text_orig:
+        st.markdown("#### 📜 Transcribed SRT Subtitles")
+        edited_orig = st.text_area("Edit or View Original SRT", value=st.session_state.srt_text_orig, height=240)
+        if edited_orig != st.session_state.srt_text_orig:
+            st.session_state.srt_text_orig = edited_orig
+            st.session_state.subtitles_orig = parse_srt(edited_orig)
 
-        c_dl, c_next = st.columns([1, 1])
-        with c_dl:
+        c_d1, c_d2 = st.columns(2)
+        with c_d1:
             st.download_button(
                 "⬇️ Download Original SRT",
-                data=st.session_state.original_srt,
+                data=st.session_state.srt_text_orig,
                 file_name="original_transcription.srt",
                 mime="text/plain",
                 use_container_width=True,
             )
-        with c_next:
-            st.info("👉 Switch to Tab 2 to translate these subtitles to Khmer.")
+        with c_d2:
+            if st.button("Proceed to Step 2: Translate to Khmer ➔", use_container_width=True):
+                st.session_state.current_step = 2
+                st.rerun()
 
 
-# ----------------------------------------------------
-# TAB 2: Translate SRT -> Khmer
-# ----------------------------------------------------
-with tabs[2]:
-    st.markdown("### 2️⃣ Translate SRT to Natural Khmer")
-    st.caption("Translate your SRT lines into natural Khmer (ភាសាខ្មែរ) with Gemini Flash. Exact timestamps are preserved.")
+# ---------------------------------------------------------------------
+# TAB 2: TRANSLATE SRT -> KHMER
+# ---------------------------------------------------------------------
+with tab2:
+    st.markdown("### 2️⃣ Translate SRT to Natural Khmer (ភាសាខ្មែរ)")
+    st.caption("Translates subtitle dialogue into natural, fluent Khmer speech while strictly preserving millisecond timestamps.")
 
-    # Option to use SRT from Step 1 or paste custom SRT
-    custom_srt_input = st.text_area(
-        "Source SRT (Paste or use from Step 1)",
-        value=st.session_state.original_srt,
+    source_srt_input = st.text_area(
+        "Source SRT Subtitles",
+        value=st.session_state.srt_text_orig,
         height=180,
-        placeholder="1\n00:00:01,000 --> 00:00:04,000\nHello world...",
+        placeholder="Paste your SRT here or transcribe in Step 1...",
     )
 
     if st.button("🇰🇭 Translate Subtitles to Khmer", type="primary", use_container_width=True):
-        if not custom_srt_input.strip():
+        if not source_srt_input.strip():
             st.warning("Please provide or transcribe SRT subtitles first.")
-        elif not gemini_key:
-            st.error("Please enter your Gemini API Key in the sidebar.")
+        elif not (input_key or current_key):
+            st.error("Please provide a Gemini API Key in the sidebar.")
         else:
-            parsed_subs = parse_srt(custom_srt_input)
-            st.session_state.subtitles_orig = parsed_subs
-            bar = st.progress(0)
-            with st.spinner("Translating to Khmer with Gemini Flash..."):
+            parsed = parse_srt(source_srt_input)
+            st.session_state.subtitles_orig = parsed
+            bar2 = st.progress(0)
+            status2 = st.empty()
+            with st.spinner("Translating to natural Khmer with Gemini..."):
                 try:
-                    khmer_subs = translate_subtitles_to_khmer(parsed_subs, gemini_key, bar)
+                    khmer_subs = translate_subtitles_khmer(parsed, input_key or current_key, bar2, status2)
                     st.session_state.subtitles_khmer = khmer_subs
-                    st.session_state.khmer_srt = export_subtitles_to_srt(khmer_subs)
-                    st.success(f"Successfully translated {len(khmer_subs)} lines into Khmer!")
-                except Exception as e:
-                    st.error(f"Translation failed: {e}")
+                    st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
+                    st.session_state.current_step = 3
+                    st.success(f"✓ Translated {len(khmer_subs)} lines into Khmer!")
+                except Exception as ex:
+                    st.error(f"Translation failed: {ex}")
 
-    if st.session_state.khmer_srt:
-        st.markdown("#### 🇰🇭 Khmer Subtitles (ភាសាខ្មែរ)")
-        edited_khmer = st.text_area(
-            "Khmer SRT Editor (You can refine text before generating voice)",
-            value=st.session_state.khmer_srt,
-            height=260,
-        )
-        if edited_khmer != st.session_state.khmer_srt:
-            st.session_state.khmer_srt = edited_khmer
+    if st.session_state.srt_text_khmer:
+        st.markdown("#### 🇰🇭 Khmer SRT Subtitles (ភាសាខ្មែរ)")
+        edited_khmer = st.text_area("Khmer SRT Subtitle Editor", value=st.session_state.srt_text_khmer, height=240)
+        if edited_khmer != st.session_state.srt_text_khmer:
+            st.session_state.srt_text_khmer = edited_khmer
             st.session_state.subtitles_khmer = parse_srt(edited_khmer)
 
-        c_dl2, c_next2 = st.columns([1, 1])
-        with c_dl2:
+        c_dk1, c_dk2 = st.columns(2)
+        with c_dk1:
             st.download_button(
                 "⬇️ Download Khmer SRT",
-                data=st.session_state.khmer_srt,
+                data=st.session_state.srt_text_khmer,
                 file_name="khmer_translation.srt",
                 mime="text/plain",
                 use_container_width=True,
             )
-        with c_next2:
-            st.info("👉 Switch to Tab 3 to generate neural voice-over audio.")
+        with c_dk2:
+            if st.button("Proceed to Step 3: Voice-Over TTS ➔", use_container_width=True):
+                st.session_state.current_step = 3
+                st.rerun()
 
 
-# ----------------------------------------------------
-# TAB 3: Generate Voice-over TTS (Auto-Retry Active)
-# ----------------------------------------------------
-with tabs[3]:
+# ---------------------------------------------------------------------
+# TAB 3: VOICE-OVER TTS (AUTO-RETRY ACTIVE)
+# ---------------------------------------------------------------------
+with tab3:
     st.markdown("### 3️⃣ Generate Voice-Over TTS (Auto-Retry Active)")
-    st.caption("Converts each Khmer subtitle line into studio-grade speech. If any line fails, the multi-tier auto-retry mechanism continues until speech is generated.")
+    st.caption("Synthesizes studio-quality Khmer speech for each subtitle line. An automatic multi-tier retry mechanism ensures no dialogue lines are missed.")
 
-    subs_to_speak = st.session_state.subtitles_khmer
-    if not subs_to_speak and st.session_state.khmer_srt:
-        subs_to_speak = parse_srt(st.session_state.khmer_srt)
-        st.session_state.subtitles_khmer = subs_to_speak
+    kh_subs = st.session_state.subtitles_khmer
+    if not kh_subs and st.session_state.srt_text_khmer:
+        kh_subs = parse_srt(st.session_state.srt_text_khmer)
+        st.session_state.subtitles_khmer = kh_subs
 
-    c_v1, c_v2 = st.columns([3, 2])
-    with c_v1:
-        st.write(f"Total Lines to Voice: **{len(subs_to_speak)}**")
-        st.write(f"Selected Voice: **{voice_tag}** | Speed: **{speech_speed}**")
-    with c_v2:
+    c_vinfo1, c_vinfo2 = st.columns([3, 2])
+    with c_vinfo1:
+        st.write(f"Subtitle Lines to Voice: **{len(kh_subs)}**")
+        st.write(f"Voice: **{st.session_state.selected_voice}** | Speed: **{st.session_state.selected_speed}**")
+    with c_vinfo2:
         st.markdown(
             """
-            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 8px; padding: 10px;">
-                <span style="color: #34d399; font-weight: 600;">🛡️ Infinite Retry Enabled</span><br>
-                <span style="font-size: 0.85rem; color: #d1d5db;">Retries Edge-TTS up to 5 times with backoff, then auto-falls back to gTTS if needed.</span>
+            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 10px; padding: 12px;">
+                <span style="color: #34d399; font-weight: 700;">🛡️ Infinite Auto-Retry Active</span><br>
+                <span style="font-size: 0.85rem; color: #cbd5e1;">Retries Edge-TTS up to 5x with backoff, then auto-falls back to gTTS Khmer.</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    if subs_to_speak:
+    if kh_subs:
         if st.button("🎙️ Generate All Voice-Over Lines", type="primary", use_container_width=True):
-            p_bar = st.progress(0)
-            status_txt = st.empty()
-            with st.spinner("Generating speech with auto-retry..."):
-                audio_map = generate_all_voiceover_clips(
-                    subs_to_speak,
-                    voice_tag,
-                    speech_speed,
-                    "+0Hz",
-                    p_bar,
-                    status_txt,
+            bar3 = st.progress(0)
+            status3 = st.empty()
+            with st.spinner("Synthesizing voice-over with retry..."):
+                clips = generate_all_tts(
+                    kh_subs,
+                    st.session_state.selected_voice,
+                    st.session_state.selected_speed,
+                    st.session_state.selected_pitch,
+                    bar3,
+                    status3,
                 )
-                st.session_state.voiceover_paths = audio_map
-                st.success(f"Generated {len(audio_map)} voice lines successfully!")
+                st.session_state.voiceover_clips = clips
+                st.session_state.current_step = 4
+                st.success(f"✓ Generated {len(clips)} voice lines successfully!")
 
-    # Display preview table for each line
-    if subs_to_speak:
-        st.markdown("#### 🎧 Individual Line Audio Previews")
-        for s in subs_to_speak[:50]:  # Display first 50 lines for speed
-            c_idx, c_time, c_txt, c_play = st.columns([1, 2, 5, 3])
-            with c_idx:
-                st.write(f"#{s.index}")
-            with c_time:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### 🎧 Line Audio Preview & Single-Line Regeneration")
+        
+        # Display preview list
+        for s in kh_subs[:40]:
+            col_id, col_time, col_txt, col_aud = st.columns([1, 2, 5, 3])
+            with col_id:
+                st.markdown(f"**#{s.index}**")
+            with col_time:
                 st.caption(f"{s.start_time}")
-            with c_txt:
-                st.markdown(f"<span class='khmer-text'>{s.text}</span>", unsafe_allow_html=True)
-            with c_play:
-                clip = st.session_state.voiceover_paths.get(s.index)
-                if clip and Path(clip).exists():
-                    st.audio(str(clip))
+            with col_txt:
+                st.markdown(f"<span class='khmer-font'>{s.text}</span>", unsafe_allow_html=True)
+            with col_aud:
+                clip_path = st.session_state.voiceover_clips.get(s.index)
+                if clip_path and Path(clip_path).exists():
+                    st.audio(str(clip_path))
                 else:
-                    if st.button(f"Retry #{s.index}", key=f"retry_{s.index}"):
-                        target_clip = USER_DIR / "tts_cache" / f"line_{s.index}_{voice_tag.split('-')[2]}.mp3"
-                        ok = synthesize_line_with_retry(s.text, voice_tag, speech_speed, "+0Hz", target_clip)
+                    if st.button(f"Retry #{s.index}", key=f"btn_re_{s.index}"):
+                        vtag = "piseth" if "piseth" in st.session_state.selected_voice.lower() else "sreymom"
+                        out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
+                        ok = generate_tts_clip_with_resilience(
+                            s.text,
+                            st.session_state.selected_voice,
+                            st.session_state.selected_speed,
+                            st.session_state.selected_pitch,
+                            out_p,
+                        )
                         if ok:
-                            st.session_state.voiceover_paths[s.index] = target_clip
+                            st.session_state.voiceover_clips[s.index] = str(out_p)
                             st.rerun()
                         else:
-                            st.error("Failed to generate.")
+                            st.error("Retry failed.")
+
+        if st.session_state.voiceover_clips:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Proceed to Step 4: Render Master MP3 ➔", type="primary", use_container_width=True):
+                st.session_state.current_step = 4
+                st.rerun()
     else:
-        st.info("Please translate subtitles in Tab 2 before generating voice-over.")
+        st.info("Translate your subtitles in Step 2 to generate voice-over speech.")
 
 
-# ----------------------------------------------------
-# TAB 4: Render Master MP3
-# ----------------------------------------------------
-with tabs[4]:
+# ---------------------------------------------------------------------
+# TAB 4: RENDER MASTER MP3
+# ---------------------------------------------------------------------
+with tab4:
     st.markdown("### 4️⃣ Render Master MP3 Audio")
-    st.caption("Composites all voice-over lines at their exact SRT timestamps into a single, high-fidelity MP3 master file.")
+    st.caption("Stitches all dialogue lines at their exact SRT timestamps into a single, high-fidelity MP3 master file.")
 
-    c_r1, c_r2 = st.columns([3, 2])
-    with c_r1:
-        st.write(f"Voiced Segments Ready: **{len(st.session_state.voiceover_paths)}**")
-        bgm_step4 = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="step4_bgm")
-        bgm_vol = st.slider("BGM Volume Ducking (dB)", min_value=-30.0, max_value=-6.0, value=-18.0, step=1.0)
-    with c_r2:
+    c_rend1, c_rend2 = st.columns([3, 2])
+    with c_rend1:
+        st.write(f"Voiced Dialogue Segments: **{len(st.session_state.voiceover_clips)}**")
+        step4_bgm = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="step4_bgm_file")
+        bgm_duck_vol = st.slider("BGM Ducking Level (dB)", min_value=-30.0, max_value=-6.0, value=-18.0, step=1.0)
+    with c_rend2:
         st.markdown(
             """
-            <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; border-radius: 8px; padding: 12px;">
-                <span style="color: #60a5fa; font-weight: 600;">⏱️ Exact Timestamp Placement</span><br>
-                <span style="font-size: 0.85rem; color: #d1d5db;">Each spoken sentence is aligned to the millisecond with your original video/SRT timing.</span>
+            <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; border-radius: 10px; padding: 12px;">
+                <span style="color: #60a5fa; font-weight: 700;">⏱️ Exact Timestamp Positioning</span><br>
+                <span style="font-size: 0.85rem; color: #cbd5e1;">Each voiced segment is placed on the audio timeline matching its exact start timestamp.</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
     if st.button("🎵 Render Final Master MP3", type="primary", use_container_width=True):
-        if not st.session_state.voiceover_paths:
-            st.error("No voice-over clips found. Please run Step 3 first.")
+        if not st.session_state.voiceover_clips:
+            st.error("No voice-over clips available. Please run Step 3 first.")
         else:
-            bgm_p = None
-            if bgm_step4:
-                bgm_p = USER_DIR / f"bgm_{int(time.time())}.mp3"
-                bgm_p.write_bytes(bgm_step4.getbuffer())
+            bgm_obj = None
+            if step4_bgm:
+                bgm_obj = USER_DIR / f"bgm_{int(time.time())}.mp3"
+                bgm_obj.write_bytes(step4_bgm.getbuffer())
 
-            bar = st.progress(0)
-            with st.spinner("Compositing and mastering MP3..."):
+            bar4 = st.progress(0)
+            status4 = st.empty()
+            with st.spinner("Rendering and mastering high-fidelity MP3..."):
                 try:
-                    mp3_out = render_master_mp3(
+                    mp3_res = render_dubbed_mp3(
                         st.session_state.subtitles_khmer,
-                        st.session_state.voiceover_paths,
+                        st.session_state.voiceover_clips,
                         st.session_state.video_duration_ms,
-                        bgm_p,
-                        bgm_vol,
-                        bar,
+                        bgm_obj,
+                        bgm_duck_vol,
+                        bar4,
+                        status4,
                     )
-                    st.session_state.rendered_mp3_path = mp3_out
-                    st.success("Master MP3 Rendered Successfully!")
-                except Exception as e:
-                    st.error(f"Render failed: {e}")
+                    st.session_state.master_mp3_path = str(mp3_res)
+                    st.success("✓ Master MP3 Rendered Successfully!")
+                except Exception as ex:
+                    st.error(f"Render failed: {ex}")
 
-    if st.session_state.rendered_mp3_path and Path(st.session_state.rendered_mp3_path).exists():
-        final_file = Path(st.session_state.rendered_mp3_path)
-        st.markdown("---")
-        st.markdown("### 🎧 Master Audio Playback")
-        st.audio(str(final_file))
+    if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
+        final_mp3 = Path(st.session_state.master_mp3_path)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="studio-card" style="border-color: rgba(16, 185, 129, 0.4);">
+                <h3 style="margin-top:0; color:#34d399;">🎧 Master Audio Player</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.audio(str(final_mp3))
         
-        c_down1, c_down2 = st.columns([2, 1])
-        with c_down1:
+        c_dl1, c_dl2 = st.columns([2, 1])
+        with c_dl1:
             st.download_button(
                 label="⬇️ Download Final Master MP3",
-                data=final_file.read_bytes(),
+                data=final_mp3.read_bytes(),
                 file_name="dubbed_khmer_master.mp3",
                 mime="audio/mp3",
                 type="primary",
                 use_container_width=True,
             )
-        with c_down2:
-            st.metric("File Size", f"{final_file.stat().st_size / (1024*1024):.2f} MB")
+        with c_dl2:
+            st.metric("File Size", f"{final_mp3.stat().st_size / (1024*1024):.2f} MB")
