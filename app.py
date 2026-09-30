@@ -1026,8 +1026,9 @@ def _transcribe_audio_chunk_gemini(
     start_sec: float,
     end_sec: float,
     target_lang: str = "original",
+    spoken_lang: str = "auto",
 ) -> str:
-    """Internal helper to transcribe one audio chunk with Gemini 3.1 / 3.7 Flash."""
+    """Internal helper to transcribe one audio chunk with Gemini with strict verbatim accuracy."""
     from google.genai import types
 
     uploaded_file = client.files.upload(file=str(audio_chunk_path))
@@ -1036,35 +1037,65 @@ def _transcribe_audio_chunk_gemini(
 
     if target_lang == "khmer":
         lang_prompt = (
-            "Transcribe and translate all spoken dialogue in this audio segment directly into 100% natural, fluent Khmer (ភាសាខ្មែរ) in standard SubRip Subtitle (SRT) format."
+            "TASK: High-accuracy Speech-to-SRT in Khmer (ភាសាខ្មែរ).\n"
+            "INSTRUCTIONS:\n"
+            "1. Listen attentively to all spoken dialogue in the audio.\n"
+            "2. Transcribe and translate into 100% natural, correct Khmer script (អក្ខរាវិរុទ្ធខ្មែរត្រឹមត្រូវ).\n"
+            "3. DO NOT hallucinate words, do not miss syllables, and do not include background sound descriptions."
+        )
+    elif spoken_lang == "khmer":
+        lang_prompt = (
+            "TASK: 100% VERBATIM KHMER SPEECH TRANSCRIPTION (ចាប់សំឡេងជាអក្សរខ្មែរឱ្យបានសុក្រឹតបំផុត).\n"
+            "STRICT RULES:\n"
+            "1. Exact verbatim words: Write down PRECISELY what the speaker says in Khmer. Do not omit particles, interjections, or phrases.\n"
+            "2. Correct Khmer orthography: Follow official Khmer dictionary spelling (អក្ខរាវិរុទ្ធត្រឹមត្រូវតាមវចនានុក្រមសម្តេចព្រះសង្ឃរាជ ជួន ណាត).\n"
+            "3. Phonetic fidelity: Distinguish similar consonant and vowel sounds accurately (e.g. ពិនិត្យ/ពិន័យ, ទៅ/នៅ, ធ្វើ/ឃើញ, ហ្នឹង/នឹង).\n"
+            "4. Proper spacing: Keep natural word-group spacing in Khmer.\n"
+            "5. NO foreign scripts: Do not use Latin or Thai script words."
+        )
+    elif spoken_lang == "chinese":
+        lang_prompt = (
+            "TASK: 100% VERBATIM CHINESE (MANDARIN) SPEECH TRANSCRIPTION.\n"
+            "STRICT RULES: Transcribe every spoken syllable accurately into standard Simplified Chinese characters without hallucination or paraphrasing."
+        )
+    elif spoken_lang == "english":
+        lang_prompt = (
+            "TASK: 100% VERBATIM ENGLISH SPEECH TRANSCRIPTION.\n"
+            "STRICT RULES: Transcribe spoken dialogue exactly word-for-word with proper capitalization, grammar, and accurate punctuation."
         )
     else:
         lang_prompt = (
-            "Transcribe all spoken dialogue in this audio segment accurately in its original spoken language into standard SubRip Subtitle (SRT) format."
+            "TASK: 100% VERBATIM SPEECH TRANSCRIPTION IN ORIGINAL SPOKEN LANGUAGE.\n"
+            "STRICT RULES:\n"
+            "1. Transcribe EXACTLY what is spoken word-for-word without guessing, paraphrasing, or omitting anything.\n"
+            "2. If spoken in Khmer, use standard Khmer script (អក្សរខ្មែរ) with correct spelling.\n"
+            "3. If spoken in Chinese, English, or Thai, use the exact native script."
         )
 
     prompt = (
-        f"You are a professional audiovisual subtitle and transcription engineer.\n"
+        f"You are a professional audiovisual subtitle engineer.\n"
         f"{lang_prompt}\n\n"
         f"Segment Information: Part {chunk_index} of {total_chunks} (Coverage: {start_ts} to {end_ts}).\n"
-        "STRICT REQUIREMENTS FOR 100% FULL-VIDEO COVERAGE:\n"
+        "STRICT REQUIREMENTS FOR 100% VERBATIM AUDIO-TO-TEXT:\n"
         "1. Standard SRT timestamp format: HH:MM:SS,mmm --> HH:MM:SS,mmm (relative to this audio segment, starting from 00:00:00,000).\n"
-        "2. FULL TRANSCRIPTION: Transcribe EVERY spoken word and sentence throughout this entire audio segment without skipping, shortening, or summarizing.\n"
-        "3. Keep each subtitle line natural and concise (1 to 2 spoken sentences max).\n"
-        "4. Output ONLY the raw SRT subtitle content. Do NOT include markdown code fences (no ```srt or ```), commentary, or explanations.\n"
-        "5. If there is absolutely no spoken dialogue, output nothing."
+        "2. COMPLETE VERBATIM CAPTURE: Transcribe EVERY spoken phrase throughout this entire audio segment without skipping or summarizing.\n"
+        "3. ACCURATE TIMESTAMPS: Align start timestamp to the exact millisecond speech begins and end timestamp to when speech finishes.\n"
+        "4. SHORT READABLE CHUNKS: 1 to 2 spoken sentences per subtitle.\n"
+        "5. Output ONLY the raw SRT subtitle content. Do NOT include markdown code fences (no ```srt or ```), commentary, or explanations.\n"
+        "6. If there is absolutely no spoken dialogue (only silence or music), output nothing."
     )
 
     config = types.GenerateContentConfig(
         max_output_tokens=32768,
-        temperature=0.2,
+        temperature=0.0,  # Deterministic greedy decoding for maximum verbatim fidelity
     )
 
     models_to_try = [
         "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3.7-flash",
         "gemini-3.5-flash",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-flash-latest",
     ]
 
     raw_srt = ""
@@ -1103,6 +1134,7 @@ def transcribe_with_gemini(
     p_bar=None,
     p_status=None,
     target_lang: str = "original",
+    spoken_lang: str = "auto",
 ) -> list[Subtitle]:
     """Transcribes the FULL video or audio speech into standard SRT using Google Gemini Multimodal AI.
     Automatically splits long videos into smart sequential chunks to ensure 100% complete coverage from 00:00 to the final second."""
@@ -1115,7 +1147,7 @@ def transcribe_with_gemini(
     if p_status: p_status.text("⚡ Extracting full audio stream with FFmpeg...")
     if p_bar: p_bar.progress(10)
 
-    # 1. Master audio extraction
+    # 1. Master audio extraction with vocal enhancement & acoustic normalization
     master_audio = USER_DIR / f"full_audio_{int(time.time())}.mp3"
     ffmpeg_bin = str(FFMPEG_PATH if FFMPEG_PATH.exists() else "ffmpeg")
 
@@ -1124,7 +1156,9 @@ def transcribe_with_gemini(
     else:
         cmd = [
             ffmpeg_bin, "-y", "-i", str(file_path),
-            "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+            "-vn", "-ac", "1", "-ar", "24000",
+            "-af", "highpass=f=70,lowpass=f=8000,dynaudnorm=f=150:g=15",
+            "-b:a", "128k",
             str(master_audio)
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1140,8 +1174,6 @@ def transcribe_with_gemini(
     st.session_state.video_duration_ms = int(total_sec * 1000)
 
     # 2. Sequential Chunking Strategy:
-    # Videos <= 180s (3 minutes) run in a single high-context call.
-    # Videos > 180s are divided into 180-second chunks to guarantee 100% full coverage without truncation.
     chunk_len_sec = 180.0
     if total_sec <= 210.0:
         chunk_intervals = [(0.0, total_sec)]
@@ -1164,11 +1196,13 @@ def transcribe_with_gemini(
         for idx, (st_sec, en_sec) in enumerate(chunk_intervals, start=1):
             chunk_file = temp_chunks_dir / f"chunk_{idx}.mp3"
             
-            # Slice chunk cleanly using FFmpeg
+            # Slice chunk cleanly using FFmpeg with vocal normalization
             slice_cmd = [
                 ffmpeg_bin, "-y", "-ss", f"{st_sec:.3f}", "-to", f"{en_sec:.3f}",
                 "-i", str(input_audio),
-                "-ac", "1", "-ar", "16000", "-b:a", "64k",
+                "-ac", "1", "-ar", "24000",
+                "-af", "highpass=f=70,lowpass=f=8000,dynaudnorm=f=150:g=15",
+                "-b:a", "128k",
                 str(chunk_file)
             ]
             subprocess.run(slice_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1191,6 +1225,7 @@ def transcribe_with_gemini(
                 start_sec=st_sec,
                 end_sec=en_sec,
                 target_lang=target_lang,
+                spoken_lang=spoken_lang,
             )
 
             chunk_subs = parse_srt(raw_chunk_srt)
@@ -1259,7 +1294,13 @@ def run_whisper_transcription(file_path: Path, model_name: str = "base", p_bar=N
 
     engine = get_whisper_engine(model_name)
     try:
-        res = engine.transcribe(str(wav_path), fp16=False)
+        res = engine.transcribe(
+            str(wav_path),
+            fp16=False,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.5,
+        )
         raw_segs = res.get("segments", [])
     except Exception as ex:
         err_msg = str(ex)
@@ -1307,6 +1348,7 @@ def run_transcription(
     p_bar=None,
     p_status=None,
     target_lang: str = "original",
+    spoken_lang: str = "auto",
 ) -> list[Subtitle]:
     """Unified transcription function supporting Gemini Multimodal AI and Whisper Local STT."""
     # Direct SRT fallback if an SRT file was provided
@@ -1325,6 +1367,7 @@ def run_transcription(
                 p_bar=p_bar,
                 p_status=p_status,
                 target_lang=target_lang,
+                spoken_lang=spoken_lang,
             )
         except Exception as gem_ex:
             # If Gemini fails and we have Whisper available, notify & fallback
@@ -1677,6 +1720,27 @@ with st.sidebar:
     if "Whisper" in transcribe_engine:
         whisper_model = st.selectbox("Whisper STT Model", options=["base", "tiny", "small"], index=0)
 
+    global_spoken_lang_choice = st.selectbox(
+        "🎙️ ភាសានិយាយក្នុងវីដេអូ (Spoken Audio Language)",
+        options=[
+            "🇰🇭 ភាសាខ្មែរ (Khmer - ចាប់សំឡេងខ្មែរ 100% ត្រឹមត្រូវអក្ខរាវិរុទ្ធ)",
+            "🌐 Auto-Detect All Languages (ស្វ័យប្រវត្តិតាមសំឡេង)",
+            "🇨🇳 ភាសាចិន (Chinese / Mandarin)",
+            "🇬🇧 ភាសាអង់គ្លេស (English)",
+            "🇹🇭 ភាសាថៃ (Thai)",
+        ],
+        index=0,
+        help="កំណត់ភាសានិយាយក្នុងវីដេអូ ដើម្បីឱ្យ AI ចាប់យកអត្ថបទ និងអក្ខរាវិរុទ្ធបានត្រឹមត្រូវបំផុត",
+    )
+    if "ខ្មែរ" in global_spoken_lang_choice or "Khmer" in global_spoken_lang_choice:
+        chosen_global_lang = "khmer"
+    elif "ចិន" in global_spoken_lang_choice or "Chinese" in global_spoken_lang_choice:
+        chosen_global_lang = "chinese"
+    elif "អង់គ្លេស" in global_spoken_lang_choice or "English" in global_spoken_lang_choice:
+        chosen_global_lang = "english"
+    else:
+        chosen_global_lang = "auto"
+
     # Dedicated Voice Detector Tool (មុខងារពិនិត្យ និងចាប់សំឡេង)
     with st.expander("🔍 ឧបករណ៍ចាប់សំឡេង (Voice Detector)", expanded=False):
         st.caption("ពិនិត្យចាប់សំឡេងប្រុស ឬស្រី (Acoustic Pitch Analysis)")
@@ -1998,6 +2062,7 @@ with tab_auto:
                         p_bar=p_bar,
                         p_status=status_box,
                         target_lang="original",
+                        spoken_lang=chosen_global_lang,
                     )
                     st.session_state.subtitles_orig = subs1
                     st.session_state.srt_text_orig = export_subtitles_to_srt(subs1)
@@ -2161,10 +2226,23 @@ with tab1:
                 key="tab1_engine_radio",
                 help="Gemini AI uses Google Multimodal API: ultra-fast, handles all languages, eliminates CPU lag and tensor errors."
             )
+            tab1_spoken_choice = st.selectbox(
+                "🎙️ ភាសានិយាយក្នុងវីដេអូ (Spoken Language)",
+                options=[
+                    "🇰🇭 ភាសាខ្មែរ (Khmer - ចាប់សំឡេងខ្មែរ 100% ត្រឹមត្រូវអក្ខរាវិរុទ្ធ)",
+                    "🌐 Auto-Detect All Languages (ស្វ័យប្រវត្តិតាមសំឡេង)",
+                    "🇨🇳 ភាសាចិន (Chinese / Mandarin)",
+                    "🇬🇧 ភាសាអង់គ្លេស (English)",
+                    "🇹🇭 ភាសាថៃ (Thai)",
+                ],
+                index=0,
+                key="tab1_spoken_lang_select",
+                help="កំណត់ភាសានិយាយក្នុងវីដេអូ ដើម្បីឱ្យ AI ចាប់យកអត្ថបទ និងអក្ខរាវិរុទ្ធបានត្រឹមត្រូវបំផុត"
+            )
             if "Gemini" in trans_engine_tab1:
                 tab1_target_lang = st.radio(
                     "Output Subtitle Language",
-                    options=["Original Spoken Language (Standard SRT)", "Direct to Khmer SRT (បកប្រែជាភាសាខ្មែរភ្លាមៗ)"],
+                    options=["Original Spoken Language (Standard SRT - អត្ថបទតាមសំឡេង)", "Direct to Khmer SRT (បកប្រែជាភាសាខ្មែរភ្លាមៗ)"],
                     index=0,
                     key="tab1_gemini_lang"
                 )
@@ -2182,7 +2260,17 @@ with tab1:
                 status_t = st.empty()
                 use_gemini = "Gemini" in trans_engine_tab1
                 is_direct_khmer = use_gemini and "Khmer" in tab1_target_lang
-                spinner_msg = "Extracting audio and transcribing speech with Gemini Flash AI..." if use_gemini else "Extracting audio and transcribing speech with Whisper..."
+
+                if "ខ្មែរ" in tab1_spoken_choice or "Khmer" in tab1_spoken_choice:
+                    chosen_spoken = "khmer"
+                elif "ចិន" in tab1_spoken_choice or "Chinese" in tab1_spoken_choice:
+                    chosen_spoken = "chinese"
+                elif "អង់គ្លេស" in tab1_spoken_choice or "English" in tab1_spoken_choice:
+                    chosen_spoken = "english"
+                else:
+                    chosen_spoken = "auto"
+
+                spinner_msg = "Extracting audio and capturing verbatim speech with Gemini AI..." if use_gemini else "Extracting audio and transcribing speech with Whisper..."
                 with st.spinner(spinner_msg):
                     try:
                         subs = run_transcription(
@@ -2193,6 +2281,7 @@ with tab1:
                             p_bar=bar,
                             p_status=status_t,
                             target_lang="khmer" if is_direct_khmer else "original",
+                            spoken_lang=chosen_spoken,
                         )
                         st.session_state.subtitles_orig = subs
                         st.session_state.srt_text_orig = export_subtitles_to_srt(subs)
