@@ -1684,6 +1684,119 @@ def render_dubbed_mp3(
     return out_file
 
 
+# =====================================================================
+# UNIFIED ALL-IN-ONE MASTER DUBBING FUNCTION (FUNCTION តែមួយ ធ្វើការទាំងអស់)
+# =====================================================================
+def run_unified_dubbing_process(
+    media_file: Path,
+    bgm_file: Optional[Path] = None,
+    api_key: str = "",
+    transcribe_engine: str = "gemini",
+    whisper_model: str = "base",
+    spoken_lang: str = "auto",
+    voice_mode: str = "alternate_mf",
+    voice_speed: str = "+60%",
+    voice_pitch: str = "+0Hz",
+    breathing_pause_ms: int = 200,
+    progress_bar=None,
+    status_box=None,
+) -> dict:
+    """Master All-In-One Function: Transcribe -> Translate -> Alternate Voice TTS -> Timeline Count -> Render MP3.
+    Executes the entire end-to-end audiovisual dubbing pipeline in ONE unified function."""
+    def log(msg: str):
+        if status_box:
+            status_box.write(msg)
+
+    def prog(val: int):
+        if progress_bar:
+            progress_bar.progress(val)
+
+    is_srt = media_file.suffix.lower() == ".srt"
+    prog(5)
+
+    # 1. STEP 1: LOAD OR TRANSCRIBE AUDIO -> SRT
+    if is_srt:
+        log("📄 **Step 1/4 (SRT Loaded)**: Parsing existing SRT subtitle file directly...")
+        raw_srt = media_file.read_text(encoding="utf-8", errors="ignore")
+        subs_orig = parse_srt(raw_srt)
+        if not subs_orig:
+            raise ValueError("ឯកសារ SRT នេះទទេ ឬខុសទម្រង់ (Invalid or empty SRT file).")
+        srt_text_orig = raw_srt
+        log(f"✓ Loaded {len(subs_orig)} lines from SRT.")
+    else:
+        eng_label = "Gemini Flash AI" if transcribe_engine.lower() == "gemini" else f"Whisper ({whisper_model})"
+        log(f"🎙️ **Step 1/4 (Speech-to-Text)**: Transcribing speech with {eng_label} (Acoustic normalized & verbatim)...")
+        subs_orig = run_transcription(
+            file_path=media_file,
+            engine=transcribe_engine,
+            whisper_model=whisper_model,
+            api_key=api_key,
+            p_bar=progress_bar,
+            p_status=status_box,
+            target_lang="original",
+            spoken_lang=spoken_lang,
+        )
+        srt_text_orig = export_subtitles_to_srt(subs_orig)
+        log(f"✓ Step 1 Complete: {len(subs_orig)} lines transcribed.")
+
+    prog(30)
+
+    # 2. STEP 2: TRANSLATE TO KHMER & ASSIGN CHARACTERS
+    has_khmer = bool(re.search(r"[\u1780-\u17FF]", srt_text_orig))
+    if has_khmer:
+        log("🇰🇭 **Step 2/4 (Khmer Detected)**: Dialogue already in Khmer! Direct character voice assignment...")
+        subs_khmer = assign_character_voices_to_subtitles(subs_orig, voice_mode, media_file if not is_srt else None)
+    else:
+        log("🇰🇭 **Step 2/4 (Translation)**: Translating subtitles into pure natural Khmer with Gemini AI...")
+        subs_trans = translate_subtitles_khmer(subs_orig, api_key, progress_bar)
+        subs_khmer = assign_character_voices_to_subtitles(subs_trans, voice_mode, media_file if not is_srt else None)
+
+    srt_text_khmer = export_subtitles_to_srt(subs_khmer)
+    log(f"✓ Step 2 Complete: {len(subs_khmer)} lines ready with Piseth 👨 & Sreymom 👩 characters.")
+    prog(50)
+
+    # 3. STEP 3: SYNTHESIZE NEURAL VOICES (EDGE-TTS)
+    log(f"🗣️ **Step 3/4 (Voiceover TTS)**: Synthesizing Piseth 👨 & Sreymom 👩 (Speed: {voice_speed}, Infinite auto-retry)...")
+    clips = generate_all_tts(
+        subs_khmer,
+        "km-KH-PisethNeural",
+        voice_speed,
+        voice_pitch,
+        progress_bar,
+    )
+    log(f"✓ Step 3 Complete: {len(clips)} audio dialogue clips generated.")
+    prog(75)
+
+    # 4. STEP 4: TIMELINE RECALCULATION & ANTI-COLLISION RENDERING
+    log("⏱️ **Step 4/4 (Timeline Sync & Master MP3)**: Re-counting timeline and rendering master MP3 without voice collision...")
+    subs_khmer_synced = recalculate_timeline_after_voiceover(subs_khmer, clips, breathing_pause_ms)
+    srt_text_khmer_synced = export_subtitles_to_srt(subs_khmer_synced)
+
+    # Render master MP3 with anti-overlap
+    video_dur_ms = st.session_state.get("video_duration_ms", 0)
+    master_mp3 = render_dubbed_mp3(
+        subtitles=subs_khmer_synced,
+        audio_map=clips,
+        video_dur_ms=video_dur_ms,
+        bgm_path=bgm_file,
+        bgm_vol_db=-18.0,
+        min_pause_ms=breathing_pause_ms,
+        p_bar=progress_bar,
+    )
+    prog(100)
+    log("🎉 **Dubbing Complete**: Master MP3 rendered successfully!")
+
+    return {
+        "master_mp3_path": str(master_mp3),
+        "subtitles_khmer": subs_khmer_synced,
+        "srt_text_khmer": srt_text_khmer_synced,
+        "subtitles_orig": subs_orig,
+        "srt_text_orig": srt_text_orig,
+        "clips": clips,
+        "total_lines": len(subs_khmer_synced),
+    }
+
+
 # ==========================================
 # Sidebar Configuration
 # ==========================================
@@ -2027,87 +2140,30 @@ with tab_auto:
             p_bar = st.progress(5)
 
             try:
-                if is_srt_input:
-                    # Direct SRT workflow: No video transcription needed!
-                    status_box.write("📄 **Loading SRT Subtitles**: Parsing subtitle file directly...")
-                    raw_srt = auto_file.getvalue().decode("utf-8", errors="ignore")
-                    subs1 = parse_srt(raw_srt)
-                    st.session_state.subtitles_orig = subs1
-                    st.session_state.srt_text_orig = raw_srt
-                    status_box.write(f"✓ Loaded {len(subs1)} subtitle lines from SRT.")
-
-                    # Check if already Khmer
-                    has_khmer = bool(re.search(r"[\u1780-\u17FF]", raw_srt))
-                    if has_khmer:
-                        status_box.write("🇰🇭 **Khmer Detected**: Subtitles are already in Khmer! Direct to Voice-Over...")
-                        subs2 = assign_character_voices_to_subtitles(subs1, st.session_state.voice_mode, None)
-                    else:
-                        status_box.write("🇰🇭 **Translating to Khmer**: Translating subtitle lines with Gemini AI...")
-                        subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
-                        subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, None)
-
-                    st.session_state.subtitles_khmer = subs2
-                    st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
-                else:
-                    # Standard Video/Audio workflow:
-                    # Step 1: Transcribe video
-                    chosen_engine = "gemini" if "Gemini" in transcribe_engine else "whisper"
-                    engine_label = "Gemini Flash AI" if chosen_engine == "gemini" else f"Whisper ({whisper_model})"
-                    status_box.write(f"📌 **Step 1/4**: Transcribing original video audio with {engine_label}...")
-                    subs1 = run_transcription(
-                        file_path=saved,
-                        engine=chosen_engine,
-                        whisper_model=whisper_model,
-                        api_key=input_key or current_key,
-                        p_bar=p_bar,
-                        p_status=status_box,
-                        target_lang="original",
-                        spoken_lang=chosen_global_lang,
-                    )
-                    st.session_state.subtitles_orig = subs1
-                    st.session_state.srt_text_orig = export_subtitles_to_srt(subs1)
-                    status_box.write(f"✓ Step 1 Complete: {len(subs1)} lines transcribed.")
-
-                    # Step 2: Translate to Khmer & Assign Characters
-                    status_box.write("🇰🇭 **Step 2/4**: Translating to natural Khmer dialogue...")
-                    subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
-                    subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, saved)
-                    st.session_state.subtitles_khmer = subs2
-                    st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
-                    status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated and character-assigned.")
-
-                # Step 3
-                status_box.write("🎙️ **Step 3/4**: Synthesizing neural speech (infinite auto-retry active)...")
-                clips = generate_all_tts(
-                    subs2,
-                    "km-KH-PisethNeural",
-                    st.session_state.selected_speed,
-                    st.session_state.selected_pitch,
-                    p_bar,
+                chosen_engine = "gemini" if "Gemini" in transcribe_engine else "whisper"
+                result = run_unified_dubbing_process(
+                    media_file=saved,
+                    bgm_file=bgm_p,
+                    api_key=input_key or current_key,
+                    transcribe_engine=chosen_engine,
+                    whisper_model=whisper_model,
+                    spoken_lang=chosen_global_lang,
+                    voice_mode=st.session_state.voice_mode,
+                    voice_speed=st.session_state.selected_speed,
+                    voice_pitch=st.session_state.selected_pitch,
+                    breathing_pause_ms=st.session_state.breathing_pause_ms,
+                    progress_bar=p_bar,
+                    status_box=status_box,
                 )
-                st.session_state.voiceover_clips = clips
-                status_box.write(f"✓ Step 3 Complete: {len(clips)} lines synthesized.")
 
-                # Recalculate timeline after voiceover (រាប់ timeline ឡើងវិញតាមសំឡេងនិយាយជាក់ស្តែង)
-                status_box.write("⏱️ **Timeline Recalculation**: Re-counting and aligning subtitle timestamps to exact voice-over duration...")
-                subs2 = recalculate_timeline_after_voiceover(subs2, clips, st.session_state.breathing_pause_ms)
-                st.session_state.subtitles_khmer = subs2
-                st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
-
-                # Step 4: Render MP3 with Anti-Overlap
-                status_box.write("🎧 **Step 4/4**: Rendering master MP3 (preventing any voice overlap)...")
-                final_out = render_dubbed_mp3(
-                    subs2,
-                    clips,
-                    st.session_state.video_duration_ms,
-                    bgm_p,
-                    -18.0,
-                    st.session_state.breathing_pause_ms,
-                    p_bar,
-                )
-                st.session_state.master_mp3_path = str(final_out)
+                st.session_state.subtitles_orig = result["subtitles_orig"]
+                st.session_state.srt_text_orig = result["srt_text_orig"]
+                st.session_state.subtitles_khmer = result["subtitles_khmer"]
+                st.session_state.srt_text_khmer = result["srt_text_khmer"]
+                st.session_state.voiceover_clips = result["clips"]
+                st.session_state.master_mp3_path = result["master_mp3_path"]
                 st.session_state.current_step = 4
-                status_box.update(label="🎉 Full Pipeline Complete (Timeline Synced & No Overlap)!", state="complete")
+                status_box.update(label="🎉 Full Pipeline Complete (All-In-One Unified Function Finished)!", state="complete")
                 st.balloons()
             except Exception as e:
                 status_box.update(label=f"❌ Error: {e}", state="error")
