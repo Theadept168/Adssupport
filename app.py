@@ -999,72 +999,65 @@ def extract_audio(video_file: Path, out_wav: Path) -> float:
         return 0.0
 
 
-def transcribe_with_gemini(
-    file_path: Path,
-    api_key: str,
-    p_bar=None,
-    p_status=None,
-    target_lang: str = "original",
-) -> list[Subtitle]:
-    """Transcribes video or audio speech directly into standard SRT using Google Gemini Multimodal AI."""
-    if not api_key:
-        raise ValueError("Please provide a valid Gemini API Key in the sidebar or settings.")
-
-    from google import genai
-    client = genai.Client(api_key=api_key)
-
-    # 1. Prepare audio file for Gemini upload
-    audio_path = USER_DIR / f"gemini_audio_{int(time.time())}.mp3"
-    if p_status: p_status.text("⚡ Extracting audio stream for Gemini AI with FFmpeg...")
-    if p_bar: p_bar.progress(15)
-
-    if file_path.suffix.lower() in [".mp3", ".wav", ".m4a", ".aac"]:
-        input_audio = file_path
-    else:
-        # Convert to lightweight 64kbps mono MP3 for ultra-fast cloud upload
-        cmd = [
-            "ffmpeg", "-y", "-i", str(file_path),
-            "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
-            str(audio_path)
-        ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if not audio_path.exists() or audio_path.stat().st_size <= 100:
-            extract_audio(file_path, audio_path)
-        input_audio = audio_path
-
-    # Check audio duration
+def get_media_duration_seconds(file_path: Path) -> float:
+    """Accurately calculates duration in seconds using pydub or ffprobe."""
     try:
-        dur = get_audio_duration_seconds(input_audio)
-        st.session_state.video_duration_ms = int(dur * 1000)
+        seg = AudioSegment.from_file(str(file_path))
+        return len(seg) / 1000.0
     except Exception:
         pass
+    try:
+        cmd = [
+            str(FFMPEG_PATH.parent / "ffprobe.exe" if FFMPEG_PATH.exists() else "ffprobe"),
+            "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(file_path)
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return float(res.stdout.strip())
+    except Exception:
+        return 0.0
 
-    if p_status: p_status.text("☁️ Uploading audio to Gemini AI Cloud...")
-    if p_bar: p_bar.progress(35)
 
-    uploaded_file = client.files.upload(file=str(input_audio))
+def _transcribe_audio_chunk_gemini(
+    client,
+    audio_chunk_path: Path,
+    chunk_index: int,
+    total_chunks: int,
+    start_sec: float,
+    end_sec: float,
+    target_lang: str = "original",
+) -> str:
+    """Internal helper to transcribe one audio chunk with Gemini 3.1 / 3.7 Flash."""
+    from google.genai import types
 
-    if p_status: p_status.text("🧠 Gemini Flash AI is transcribing speech into SubRip (SRT)...")
-    if p_bar: p_bar.progress(60)
+    uploaded_file = client.files.upload(file=str(audio_chunk_path))
+    start_ts = format_ms_to_timestamp(int(start_sec * 1000))
+    end_ts = format_ms_to_timestamp(int(end_sec * 1000))
 
     if target_lang == "khmer":
         lang_prompt = (
-            "Transcribe and translate all spoken dialogue in this audio file directly into 100% natural, fluent Khmer (ភាសាខ្មែរ) in standard SubRip Subtitle (SRT) format."
+            "Transcribe and translate all spoken dialogue in this audio segment directly into 100% natural, fluent Khmer (ភាសាខ្មែរ) in standard SubRip Subtitle (SRT) format."
         )
     else:
         lang_prompt = (
-            "Transcribe all spoken dialogue in this audio file accurately in its spoken language into standard SubRip Subtitle (SRT) format."
+            "Transcribe all spoken dialogue in this audio segment accurately in its original spoken language into standard SubRip Subtitle (SRT) format."
         )
 
     prompt = (
         f"You are a professional audiovisual subtitle and transcription engineer.\n"
         f"{lang_prompt}\n\n"
-        "STRICT REQUIREMENTS:\n"
-        "1. Standard SRT timestamp format: HH:MM:SS,mmm --> HH:MM:SS,mmm (e.g. 00:00:01,200 --> 00:00:04,500).\n"
-        "2. Accurately capture spoken dialogue with precise start and end timestamps corresponding to the audio.\n"
-        "3. Keep each subtitle chunk short and natural (1 to 2 spoken sentences max).\n"
-        "4. Output ONLY the raw SRT subtitle content. Do NOT include markdown code fences (no ```srt or ```), commentary, or notes.\n"
+        f"Segment Information: Part {chunk_index} of {total_chunks} (Coverage: {start_ts} to {end_ts}).\n"
+        "STRICT REQUIREMENTS FOR 100% FULL-VIDEO COVERAGE:\n"
+        "1. Standard SRT timestamp format: HH:MM:SS,mmm --> HH:MM:SS,mmm (relative to this audio segment, starting from 00:00:00,000).\n"
+        "2. FULL TRANSCRIPTION: Transcribe EVERY spoken word and sentence throughout this entire audio segment without skipping, shortening, or summarizing.\n"
+        "3. Keep each subtitle line natural and concise (1 to 2 spoken sentences max).\n"
+        "4. Output ONLY the raw SRT subtitle content. Do NOT include markdown code fences (no ```srt or ```), commentary, or explanations.\n"
         "5. If there is absolutely no spoken dialogue, output nothing."
+    )
+
+    config = types.GenerateContentConfig(
+        max_output_tokens=32768,
+        temperature=0.2,
     )
 
     models_to_try = [
@@ -1080,44 +1073,171 @@ def transcribe_with_gemini(
         try:
             resp = client.models.generate_content(
                 model=model_name,
-                contents=[uploaded_file, prompt]
+                contents=[uploaded_file, prompt],
+                config=config,
             )
-            raw_srt = resp.text.strip()
+            raw_srt = (resp.text or "").strip()
             if raw_srt:
                 break
         except Exception as e:
             last_err = e
             continue
 
-    # Cleanup remote file in Gemini Cloud
     try:
         client.files.delete(name=uploaded_file.name)
     except Exception:
         pass
 
-    # Cleanup local temporary audio if generated
-    if audio_path.exists() and input_audio == audio_path:
-        try:
-            audio_path.unlink()
-        except Exception:
-            pass
+    if not raw_srt and last_err:
+        raise last_err
 
-    if not raw_srt:
-        if last_err:
-            raise RuntimeError(f"Gemini transcription failed: {last_err}")
-        raise ValueError("Gemini មិនអាចចាប់សំឡេងនិយាយក្នុងវីដេអូបានទេ (No speech detected in audio).")
-
-    # Clean markdown formatting if present
+    # Clean code fences
     raw_srt = re.sub(r"^```(?:srt)?\s*", "", raw_srt, flags=re.IGNORECASE)
     raw_srt = re.sub(r"\s*```$", "", raw_srt)
-    raw_srt = raw_srt.strip()
+    return raw_srt.strip()
 
-    subs = parse_srt(raw_srt)
-    if not subs:
-        raise ValueError("Gemini returned invalid SRT format or no dialogue. Please try again.")
+
+def transcribe_with_gemini(
+    file_path: Path,
+    api_key: str,
+    p_bar=None,
+    p_status=None,
+    target_lang: str = "original",
+) -> list[Subtitle]:
+    """Transcribes the FULL video or audio speech into standard SRT using Google Gemini Multimodal AI.
+    Automatically splits long videos into smart sequential chunks to ensure 100% complete coverage from 00:00 to the final second."""
+    if not api_key:
+        raise ValueError("Please provide a valid Gemini API Key in the sidebar or settings.")
+
+    from google import genai
+    client = genai.Client(api_key=api_key)
+
+    if p_status: p_status.text("⚡ Extracting full audio stream with FFmpeg...")
+    if p_bar: p_bar.progress(10)
+
+    # 1. Master audio extraction
+    master_audio = USER_DIR / f"full_audio_{int(time.time())}.mp3"
+    ffmpeg_bin = str(FFMPEG_PATH if FFMPEG_PATH.exists() else "ffmpeg")
+
+    if file_path.suffix.lower() in [".mp3", ".wav", ".m4a", ".aac"]:
+        input_audio = file_path
+    else:
+        cmd = [
+            ffmpeg_bin, "-y", "-i", str(file_path),
+            "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+            str(master_audio)
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not master_audio.exists() or master_audio.stat().st_size <= 100:
+            extract_audio(file_path, master_audio)
+        input_audio = master_audio
+
+    # Get accurate duration
+    total_sec = get_media_duration_seconds(input_audio)
+    if total_sec < 0.2:
+        raise ValueError("ឯកសារវីដេអូ ឬសំឡេងនេះ មិនមានសំឡេងនិយាយ ឬជាឯកសារទទេ (Audio is empty or silent).")
+
+    st.session_state.video_duration_ms = int(total_sec * 1000)
+
+    # 2. Sequential Chunking Strategy:
+    # Videos <= 180s (3 minutes) run in a single high-context call.
+    # Videos > 180s are divided into 180-second chunks to guarantee 100% full coverage without truncation.
+    chunk_len_sec = 180.0
+    if total_sec <= 210.0:
+        chunk_intervals = [(0.0, total_sec)]
+    else:
+        chunk_intervals = []
+        cur = 0.0
+        while cur < total_sec:
+            end = min(total_sec, cur + chunk_len_sec)
+            chunk_intervals.append((cur, end))
+            cur = end
+
+    total_chunks = len(chunk_intervals)
+    all_subtitles = []
+    global_sub_idx = 1
+
+    temp_chunks_dir = USER_DIR / f"chunks_{int(time.time())}"
+    temp_chunks_dir.mkdir(exist_ok=True)
+
+    try:
+        for idx, (st_sec, en_sec) in enumerate(chunk_intervals, start=1):
+            chunk_file = temp_chunks_dir / f"chunk_{idx}.mp3"
+            
+            # Slice chunk cleanly using FFmpeg
+            slice_cmd = [
+                ffmpeg_bin, "-y", "-ss", f"{st_sec:.3f}", "-to", f"{en_sec:.3f}",
+                "-i", str(input_audio),
+                "-ac", "1", "-ar", "16000", "-b:a", "64k",
+                str(chunk_file)
+            ]
+            subprocess.run(slice_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if not chunk_file.exists() or chunk_file.stat().st_size <= 100:
+                continue
+
+            # Update progress UI
+            pct = 15 + int(75 * (idx / total_chunks))
+            if p_bar: p_bar.progress(min(90, pct))
+            st_fmt = format_ms_to_timestamp(int(st_sec * 1000))
+            en_fmt = format_ms_to_timestamp(int(en_sec * 1000))
+            if p_status:
+                p_status.text(f"🧠 Transcribing Full Video: Part {idx}/{total_chunks} ({st_fmt} ➔ {en_fmt})...")
+
+            raw_chunk_srt = _transcribe_audio_chunk_gemini(
+                client=client,
+                audio_chunk_path=chunk_file,
+                chunk_index=idx,
+                total_chunks=total_chunks,
+                start_sec=st_sec,
+                end_sec=en_sec,
+                target_lang=target_lang,
+            )
+
+            chunk_subs = parse_srt(raw_chunk_srt)
+            offset_ms = int(st_sec * 1000)
+
+            for s in chunk_subs:
+                adjusted_start = s.start_ms + offset_ms
+                adjusted_end = s.end_ms + offset_ms
+                all_subtitles.append(
+                    Subtitle(
+                        index=global_sub_idx,
+                        start_time=format_ms_to_timestamp(adjusted_start),
+                        end_time=format_ms_to_timestamp(adjusted_end),
+                        text=s.text,
+                        start_ms=adjusted_start,
+                        end_ms=adjusted_end,
+                    )
+                )
+                global_sub_idx += 1
+
+            # Cleanup chunk file immediately
+            try:
+                chunk_file.unlink()
+            except Exception:
+                pass
+
+    finally:
+        # Cleanup temp directory and master audio
+        try:
+            shutil.rmtree(temp_chunks_dir, ignore_errors=True)
+        except Exception:
+            pass
+        if master_audio.exists():
+            try:
+                master_audio.unlink()
+            except Exception:
+                pass
+
+    if not all_subtitles:
+        raise ValueError(
+            "Gemini មិនអាចចាប់សំឡេងនិយាយក្នុងវីដេអូបានទេ (No speech dialogue transcribed). "
+            "សូមប្រាកដថាវីដេអូមានសំឡេងមនុស្សនិយាយ ឬបញ្ចូលឯកសារ SRT ផ្ទាល់។"
+        )
 
     if p_bar: p_bar.progress(100)
-    return subs
+    if p_status: p_status.text(f"✓ Transcribed Full Video: {len(all_subtitles)} subtitle lines complete!")
+    return all_subtitles
 
 
 def run_whisper_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_status=None) -> list[Subtitle]:
