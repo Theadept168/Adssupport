@@ -505,8 +505,14 @@ def format_ms_to_timestamp(ms: int) -> str:
 def parse_srt(srt_content: str) -> list[Subtitle]:
     if not srt_content or not srt_content.strip():
         return []
+
+    # Strip markdown code fences if Gemini/LLM added them
+    clean_text = re.sub(r"^```(?:srt)?\s*", "", srt_content.strip(), flags=re.IGNORECASE)
+    clean_text = re.sub(r"\s*```$", "", clean_text).strip()
+
     subtitles = []
-    blocks = re.split(r"\n\s*\n", srt_content.strip())
+    # 1. Primary parser: split by double newlines
+    blocks = re.split(r"\n\s*\n", clean_text)
     cur_idx = 1
     for block in blocks:
         lines = [line.strip() for line in block.strip().splitlines() if line.strip()]
@@ -523,6 +529,35 @@ def parse_srt(srt_content: str) -> list[Subtitle]:
             e_ms = parse_timestamp_to_ms(end_str)
             if e_ms <= s_ms:
                 e_ms = s_ms + 2500
+            if text:
+                subtitles.append(
+                    Subtitle(
+                        index=cur_idx,
+                        start_time=start_str,
+                        end_time=end_str,
+                        text=text,
+                        start_ms=s_ms,
+                        end_ms=e_ms,
+                    )
+                )
+                cur_idx += 1
+
+    # 2. Resilient Regex Fallback if standard splitting missed any items
+    if not subtitles:
+        pattern = re.compile(
+            r"(\d{1,2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,\.]\d{3})\s*\n+([^\n]+(?:\n[^\n]+)*?)(?=\n+\d+\n+\d{1,2}:\d{2}:\d{2}|\n+\d{1,2}:\d{2}:\d{2}|$)",
+            re.MULTILINE
+        )
+        for m in pattern.finditer(clean_text):
+            start_str = m.group(1).replace(".", ",")
+            end_str = m.group(2).replace(".", ",")
+            text = " ".join(m.group(3).splitlines()).strip()
+            if not text:
+                continue
+            s_ms = parse_timestamp_to_ms(start_str)
+            e_ms = parse_timestamp_to_ms(end_str)
+            if e_ms <= s_ms:
+                e_ms = s_ms + 2500
             subtitles.append(
                 Subtitle(
                     index=cur_idx,
@@ -534,6 +569,7 @@ def parse_srt(srt_content: str) -> list[Subtitle]:
                 )
             )
             cur_idx += 1
+
     return subtitles
 
 
@@ -963,14 +999,128 @@ def extract_audio(video_file: Path, out_wav: Path) -> float:
         return 0.0
 
 
-def run_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_status=None) -> list[Subtitle]:
-    # Direct SRT fallback if an SRT file was provided
-    if file_path.suffix.lower() == ".srt":
-        raw = file_path.read_text(encoding="utf-8", errors="ignore")
-        subs = parse_srt(raw)
-        if subs:
-            return subs
+def transcribe_with_gemini(
+    file_path: Path,
+    api_key: str,
+    p_bar=None,
+    p_status=None,
+    target_lang: str = "original",
+) -> list[Subtitle]:
+    """Transcribes video or audio speech directly into standard SRT using Google Gemini Multimodal AI."""
+    if not api_key:
+        raise ValueError("Please provide a valid Gemini API Key in the sidebar or settings.")
 
+    from google import genai
+    client = genai.Client(api_key=api_key)
+
+    # 1. Prepare audio file for Gemini upload
+    audio_path = USER_DIR / f"gemini_audio_{int(time.time())}.mp3"
+    if p_status: p_status.text("⚡ Extracting audio stream for Gemini AI with FFmpeg...")
+    if p_bar: p_bar.progress(15)
+
+    if file_path.suffix.lower() in [".mp3", ".wav", ".m4a", ".aac"]:
+        input_audio = file_path
+    else:
+        # Convert to lightweight 64kbps mono MP3 for ultra-fast cloud upload
+        cmd = [
+            "ffmpeg", "-y", "-i", str(file_path),
+            "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+            str(audio_path)
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if not audio_path.exists() or audio_path.stat().st_size <= 100:
+            extract_audio(file_path, audio_path)
+        input_audio = audio_path
+
+    # Check audio duration
+    try:
+        dur = get_audio_duration_seconds(input_audio)
+        st.session_state.video_duration_ms = int(dur * 1000)
+    except Exception:
+        pass
+
+    if p_status: p_status.text("☁️ Uploading audio to Gemini AI Cloud...")
+    if p_bar: p_bar.progress(35)
+
+    uploaded_file = client.files.upload(file=str(input_audio))
+
+    if p_status: p_status.text("🧠 Gemini Flash AI is transcribing speech into SubRip (SRT)...")
+    if p_bar: p_bar.progress(60)
+
+    if target_lang == "khmer":
+        lang_prompt = (
+            "Transcribe and translate all spoken dialogue in this audio file directly into 100% natural, fluent Khmer (ភាសាខ្មែរ) in standard SubRip Subtitle (SRT) format."
+        )
+    else:
+        lang_prompt = (
+            "Transcribe all spoken dialogue in this audio file accurately in its spoken language into standard SubRip Subtitle (SRT) format."
+        )
+
+    prompt = (
+        f"You are a professional audiovisual subtitle and transcription engineer.\n"
+        f"{lang_prompt}\n\n"
+        "STRICT REQUIREMENTS:\n"
+        "1. Standard SRT timestamp format: HH:MM:SS,mmm --> HH:MM:SS,mmm (e.g. 00:00:01,200 --> 00:00:04,500).\n"
+        "2. Accurately capture spoken dialogue with precise start and end timestamps corresponding to the audio.\n"
+        "3. Keep each subtitle chunk short and natural (1 to 2 spoken sentences max).\n"
+        "4. Output ONLY the raw SRT subtitle content. Do NOT include markdown code fences (no ```srt or ```), commentary, or notes.\n"
+        "5. If there is absolutely no spoken dialogue, output nothing."
+    )
+
+    models_to_try = [
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+    ]
+
+    raw_srt = ""
+    last_err = None
+    for model_name in models_to_try:
+        try:
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=[uploaded_file, prompt]
+            )
+            raw_srt = resp.text.strip()
+            if raw_srt:
+                break
+        except Exception as e:
+            last_err = e
+            continue
+
+    # Cleanup remote file in Gemini Cloud
+    try:
+        client.files.delete(name=uploaded_file.name)
+    except Exception:
+        pass
+
+    # Cleanup local temporary audio if generated
+    if audio_path.exists() and input_audio == audio_path:
+        try:
+            audio_path.unlink()
+        except Exception:
+            pass
+
+    if not raw_srt:
+        if last_err:
+            raise RuntimeError(f"Gemini transcription failed: {last_err}")
+        raise ValueError("Gemini មិនអាចចាប់សំឡេងនិយាយក្នុងវីដេអូបានទេ (No speech detected in audio).")
+
+    # Clean markdown formatting if present
+    raw_srt = re.sub(r"^```(?:srt)?\s*", "", raw_srt, flags=re.IGNORECASE)
+    raw_srt = re.sub(r"\s*```$", "", raw_srt)
+    raw_srt = raw_srt.strip()
+
+    subs = parse_srt(raw_srt)
+    if not subs:
+        raise ValueError("Gemini returned invalid SRT format or no dialogue. Please try again.")
+
+    if p_bar: p_bar.progress(100)
+    return subs
+
+
+def run_whisper_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_status=None) -> list[Subtitle]:
     wav_path = USER_DIR / "extracted_audio.wav"
     if p_status: p_status.text("⚡ Extracting audio stream with FFmpeg...")
     if p_bar: p_bar.progress(15)
@@ -1027,6 +1177,43 @@ def run_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_s
 
     if p_bar: p_bar.progress(100)
     return subtitles
+
+
+def run_transcription(
+    file_path: Path,
+    engine: str = "gemini",
+    whisper_model: str = "base",
+    api_key: str = "",
+    p_bar=None,
+    p_status=None,
+    target_lang: str = "original",
+) -> list[Subtitle]:
+    """Unified transcription function supporting Gemini Multimodal AI and Whisper Local STT."""
+    # Direct SRT fallback if an SRT file was provided
+    if file_path.suffix.lower() == ".srt":
+        raw = file_path.read_text(encoding="utf-8", errors="ignore")
+        subs = parse_srt(raw)
+        if subs:
+            return subs
+
+    # If Gemini AI is requested (or default)
+    if engine.lower() == "gemini":
+        try:
+            return transcribe_with_gemini(
+                file_path=file_path,
+                api_key=api_key,
+                p_bar=p_bar,
+                p_status=p_status,
+                target_lang=target_lang,
+            )
+        except Exception as gem_ex:
+            # If Gemini fails and we have Whisper available, notify & fallback
+            if p_status:
+                p_status.text(f"⚠️ Gemini notice: {gem_ex}. Trying Whisper fallback...")
+            time.sleep(1.2)
+            return run_whisper_transcription(file_path, whisper_model, p_bar, p_status)
+    else:
+        return run_whisper_transcription(file_path, whisper_model, p_bar, p_status)
 
 
 # 2. Translate SRT to Pure Khmer (with Multi-Model Retry)
@@ -1353,14 +1540,22 @@ with st.sidebar:
     current_key = cfg.get("gemini_api_key", "")
     
     st.markdown("#### ⚙️ AI Engine Settings")
-    input_key = st.text_input("Gemini API Key", value=current_key, type="password", help="For Step 2: High-accuracy Khmer translation")
+    input_key = st.text_input("Gemini API Key", value=current_key, type="password", help="For Step 1 Speech-to-SRT & Step 2 Khmer translation")
     if input_key != current_key:
         if st.button("💾 Save Key", use_container_width=True):
             save_config({"gemini_api_key": input_key})
             st.success("API key saved!")
             st.rerun()
 
-    whisper_model = st.selectbox("Whisper STT Accuracy", options=["base", "tiny", "small"], index=0)
+    transcribe_engine = st.selectbox(
+        "🎙️ Speech-to-SRT Engine",
+        options=["✨ Gemini Flash AI (Cloud - Recommended)", "💻 Whisper Local (Offline STT)"],
+        index=0,
+        help="Gemini AI transcribes speech to SRT quickly with accurate timestamps and zero CPU strain.",
+    )
+    whisper_model = "base"
+    if "Whisper" in transcribe_engine:
+        whisper_model = st.selectbox("Whisper STT Model", options=["base", "tiny", "small"], index=0)
 
     # Dedicated Voice Detector Tool (មុខងារពិនិត្យ និងចាប់សំឡេង)
     with st.expander("🔍 ឧបករណ៍ចាប់សំឡេង (Voice Detector)", expanded=False):
@@ -1509,7 +1704,7 @@ with c_p1:
             <div style='overflow:hidden;'>
                 <div style='font-size:0.72rem; font-weight:700; color:#38bdf8; letter-spacing:0.04em;'>STEP 01{chk}</div>
                 <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Transcribe SRT</div>
-                <div style='font-size:0.75rem; color:#94a3b8;'>Whisper Engine</div>
+                <div style='font-size:0.75rem; color:#94a3b8;'>Gemini / Whisper</div>
             </div>
         </div>
         """,
@@ -1672,8 +1867,18 @@ with tab_auto:
                 else:
                     # Standard Video/Audio workflow:
                     # Step 1: Transcribe video
-                    status_box.write("📌 **Step 1/4**: Transcribing original video audio with Whisper AI...")
-                    subs1 = run_transcription(saved, whisper_model, p_bar)
+                    chosen_engine = "gemini" if "Gemini" in transcribe_engine else "whisper"
+                    engine_label = "Gemini Flash AI" if chosen_engine == "gemini" else f"Whisper ({whisper_model})"
+                    status_box.write(f"📌 **Step 1/4**: Transcribing original video audio with {engine_label}...")
+                    subs1 = run_transcription(
+                        file_path=saved,
+                        engine=chosen_engine,
+                        whisper_model=whisper_model,
+                        api_key=input_key or current_key,
+                        p_bar=p_bar,
+                        p_status=status_box,
+                        target_lang="original",
+                    )
                     st.session_state.subtitles_orig = subs1
                     st.session_state.srt_text_orig = export_subtitles_to_srt(subs1)
                     status_box.write(f"✓ Step 1 Complete: {len(subs1)} lines transcribed.")
@@ -1828,24 +2033,58 @@ with tab1:
                 key=f"step1_file_{st.session_state.get('uploader_key', 0)}",
             )
         with c2:
-            st.markdown("**Transcription Settings**")
-            st.info(f"Model: **Whisper {whisper_model}**\n\nSupports auto-detection for English, Chinese, Thai, and 90+ languages.")
+            st.markdown("**Transcription Engine**")
+            trans_engine_tab1 = st.radio(
+                "Speech Recognition AI",
+                options=["✨ Gemini Flash AI (Cloud - Recommended)", "💻 Whisper Local (Offline)"],
+                index=0,
+                key="tab1_engine_radio",
+                help="Gemini AI uses Google Multimodal API: ultra-fast, handles all languages, eliminates CPU lag and tensor errors."
+            )
+            if "Gemini" in trans_engine_tab1:
+                tab1_target_lang = st.radio(
+                    "Output Subtitle Language",
+                    options=["Original Spoken Language (Standard SRT)", "Direct to Khmer SRT (បកប្រែជាភាសាខ្មែរភ្លាមៗ)"],
+                    index=0,
+                    key="tab1_gemini_lang"
+                )
+            else:
+                st.info(f"Model: **Whisper {whisper_model}**\n\nSupports auto-detection for English, Chinese, Thai, and 90+ languages.")
 
         if step1_uploader:
-            if st.button("🎙️ Transcribe Media File to SRT", type="primary", use_container_width=True):
+            btn_text = "🎙️ Transcribe & Dub to Khmer SRT with Gemini" if ("Gemini" in trans_engine_tab1 and "Khmer" in tab1_target_lang) else "🎙️ Transcribe Media File to SRT"
+            if st.button(btn_text, type="primary", use_container_width=True):
                 tgt = USER_DIR / f"input_{int(time.time())}{Path(step1_uploader.name).suffix}"
                 tgt.write_bytes(step1_uploader.getbuffer())
                 st.session_state.media_path = tgt
 
                 bar = st.progress(0)
                 status_t = st.empty()
-                with st.spinner("Extracting audio and transcribing speech with Whisper..."):
+                use_gemini = "Gemini" in trans_engine_tab1
+                is_direct_khmer = use_gemini and "Khmer" in tab1_target_lang
+                spinner_msg = "Extracting audio and transcribing speech with Gemini Flash AI..." if use_gemini else "Extracting audio and transcribing speech with Whisper..."
+                with st.spinner(spinner_msg):
                     try:
-                        subs = run_transcription(tgt, whisper_model, bar, status_t)
+                        subs = run_transcription(
+                            file_path=tgt,
+                            engine="gemini" if use_gemini else "whisper",
+                            whisper_model=whisper_model,
+                            api_key=input_key or current_key,
+                            p_bar=bar,
+                            p_status=status_t,
+                            target_lang="khmer" if is_direct_khmer else "original",
+                        )
                         st.session_state.subtitles_orig = subs
                         st.session_state.srt_text_orig = export_subtitles_to_srt(subs)
-                        st.session_state.current_step = 2
-                        st.success(f"✓ Transcribed {len(subs)} lines successfully!")
+                        if is_direct_khmer:
+                            subs_assigned = assign_character_voices_to_subtitles(subs, st.session_state.voice_mode, tgt)
+                            st.session_state.subtitles_khmer = subs_assigned
+                            st.session_state.srt_text_khmer = export_subtitles_to_srt(subs_assigned)
+                            st.session_state.current_step = 3
+                            st.success(f"✓ Transcribed & Translated {len(subs)} lines directly into Khmer with Gemini AI!")
+                        else:
+                            st.session_state.current_step = 2
+                            st.success(f"✓ Transcribed {len(subs)} lines successfully with {'Gemini AI' if use_gemini else 'Whisper'}!")
                     except Exception as ex:
                         st.error(f"Transcription error: {ex}")
 
