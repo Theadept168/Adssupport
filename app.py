@@ -942,28 +942,63 @@ def extract_audio(video_file: Path, out_wav: Path) -> float:
         "-ac", "1",
         str(out_wav),
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except Exception:
+        pass
+
+    if not out_wav.exists() or out_wav.stat().st_size <= 44:
+        return 0.0
+
     try:
         seg = AudioSegment.from_file(out_wav)
-        return len(seg) / 1000.0
+        dur = len(seg) / 1000.0
+        # If audio is very short (< 2.0s) but not empty, pad with silence to prevent Whisper tensor 0-element reshape crash
+        if 0.1 <= dur < 2.0:
+            seg = seg + AudioSegment.silent(duration=2000)
+            seg.export(str(out_wav), format="wav")
+            dur = len(seg) / 1000.0
+        return dur
     except Exception:
         return 0.0
 
 
 def run_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_status=None) -> list[Subtitle]:
+    # Direct SRT fallback if an SRT file was provided
+    if file_path.suffix.lower() == ".srt":
+        raw = file_path.read_text(encoding="utf-8", errors="ignore")
+        subs = parse_srt(raw)
+        if subs:
+            return subs
+
     wav_path = USER_DIR / "extracted_audio.wav"
     if p_status: p_status.text("⚡ Extracting audio stream with FFmpeg...")
     if p_bar: p_bar.progress(15)
 
     duration_sec = extract_audio(file_path, wav_path)
+    if duration_sec < 0.2 or not wav_path.exists() or wav_path.stat().st_size <= 100:
+        raise ValueError(
+            "ឯកសារវីដេអូ ឬសំឡេងនេះ មិនមានសំឡេងនិយាយ ឬជាឯកសារទទេ (Audio stream is empty or silent). "
+            "សូម Upload វីដេអូដែលមានសំឡេងនិយាយ ឬបញ្ចូលឯកសារ SRT ផ្ទាល់។"
+        )
+
     st.session_state.video_duration_ms = int(duration_sec * 1000)
 
     if p_status: p_status.text(f"🧠 Running Whisper ({model_name}) speech recognition...")
     if p_bar: p_bar.progress(40)
 
     engine = get_whisper_engine(model_name)
-    res = engine.transcribe(str(wav_path), fp16=False)
-    raw_segs = res.get("segments", [])
+    try:
+        res = engine.transcribe(str(wav_path), fp16=False)
+        raw_segs = res.get("segments", [])
+    except Exception as ex:
+        err_msg = str(ex)
+        if "cannot reshape tensor" in err_msg or "0 elements" in err_msg:
+            raise ValueError(
+                "មិនមានសំឡេងនិយាយក្នុងវីដេអូនេះទេ (No audible speech detected). "
+                "សូម Upload វីដេអូដែលមានសំឡេងនិយាយច្បាស់ ឬប្រើប្រាស់ឯកសារ SRT ផ្ទាល់។"
+            )
+        raise ex
 
     if p_bar: p_bar.progress(85)
     subtitles = []
@@ -983,6 +1018,13 @@ def run_transcription(file_path: Path, model_name: str = "base", p_bar=None, p_s
                 end_ms=e_ms,
             )
         )
+
+    if not subtitles:
+        raise ValueError(
+            "Whisper មិនអាចចាប់សំឡេងនិយាយបានទេ (No dialogue transcribed). "
+            "សូមប្រាកដថាវីដេអូមានសំឡេងមនុស្សនិយាយ ឬបញ្ចូលឯកសារ SRT ផ្ទាល់។"
+        )
+
     if p_bar: p_bar.progress(100)
     return subtitles
 
