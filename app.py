@@ -604,7 +604,35 @@ def get_user_workspace() -> Path:
 USER_DIR = get_user_workspace()
 
 
-# ==========================================
+def clear_user_cache():
+    """Cleans all temporary voice clips, extracted wavs, and cached rendered mp3s for the user."""
+    tts_dir = USER_DIR / "tts_cache"
+    if tts_dir.exists():
+        try:
+            shutil.rmtree(tts_dir, ignore_errors=True)
+            tts_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+    # Clear temp audio/video files in USER_DIR
+    for f in USER_DIR.glob("*.*"):
+        if f.is_file() and f.suffix.lower() in [".mp3", ".wav", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".srt"]:
+            try:
+                f.unlink()
+            except Exception:
+                pass
+
+    # Reset session states
+    st.session_state.subtitles_orig = []
+    st.session_state.srt_text_orig = ""
+    st.session_state.subtitles_khmer = []
+    st.session_state.srt_text_khmer = ""
+    st.session_state.voiceover_clips = {}
+    st.session_state.master_mp3_path = None
+    st.session_state.media_path = None
+    st.session_state.video_duration_ms = 0
+    st.session_state.current_step = 1
+
 # Core Processing Engines
 # ==========================================
 
@@ -1285,6 +1313,16 @@ with tab_auto:
                 use_container_width=True,
             )
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        c_pipe_c1, c_pipe_c2 = st.columns([3, 1])
+        with c_pipe_c1:
+            st.info("💡 ក្រោយពេលទាញយក MP3 និង SRT រួចរាល់ សូមចុចប៊ូតុង **«Clear Cache & Make New MP3»** ដើម្បីសម្អាតអង្គចងចាំ និងចាប់ផ្តើមធ្វើ MP3 ថ្មី។")
+        with c_pipe_c2:
+            if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab0", type="primary", use_container_width=True):
+                clear_user_cache()
+                st.success("✓ Cache cleared! Ready for new MP3.")
+                st.rerun()
+
 
 # ---------------------------------------------------------------------
 # TAB 1: TRANSCRIBE VIDEO -> SRT
@@ -1648,3 +1686,13 @@ with tab4:
             )
         with c_dl3:
             st.metric("File Size", f"{final_mp3.stat().st_size / (1024*1024):.2f} MB")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        c_done1, c_done2 = st.columns([3, 1])
+        with c_done1:
+            st.info("💡 ក្រោយពេលទាញយក MP3 និង SRT រួចរាល់ សូមចុចប៊ូតុង **«Clear Cache & Make New MP3»** ដើម្បីសម្អាតអង្គចងចាំ និងចាប់ផ្តើមធ្វើ MP3 ថ្មី។")
+        with c_done2:
+            if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab4", type="primary", use_container_width=True):
+                clear_user_cache()
+                st.success("✓ Cache cleared! Ready for new MP3.")
+                st.rerun()
