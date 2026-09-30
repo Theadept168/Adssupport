@@ -449,13 +449,15 @@ def init_session():
         "voiceover_clips": {},
         "master_mp3_path": None,
         "voice_mode": "alternate_mf",  # Default to alternating male/female (ឆ្លាស់ប្រុសស្រី)
-        "selected_speed": "+0%",
+        "selected_speed": "+60%",  # 1.60x speed (1.60%)
         "selected_pitch": "+0Hz",
         "breathing_pause_ms": 200,  # 200ms anti-collision breathing gap
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    if st.session_state.get("selected_speed") in (None, "+0%"):
+        st.session_state.selected_speed = "+60%"
 
 
 init_session()
@@ -914,10 +916,13 @@ with st.sidebar:
         help="ធានាថាតួអង្គមិននិយាយជាន់គ្នាដាច់ខាត ដោយទុកចន្លោះពេលធម្មជាតិមុនតួអង្គបន្ទាប់និយាយ",
     )
 
+    speed_opts = ["-20%", "-10%", "+0%", "+15%", "+30%", "+45%", "+60%", "+75%", "+90%", "+100%"]
+    cur_speed = st.session_state.selected_speed if st.session_state.selected_speed in speed_opts else "+60%"
     st.session_state.selected_speed = st.select_slider(
         "Speech Speed / ល្បឿនសំឡេង",
-        options=["-20%", "-10%", "+0%", "+10%", "+20%", "+30%"],
-        value=st.session_state.selected_speed,
+        options=speed_opts,
+        value=cur_speed,
+        help="ល្បឿនបច្ចុប្បន្នកំណត់ជាលំនាំដើម: +60% (1.60x speed)",
     )
 
     st.markdown("---")
