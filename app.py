@@ -143,12 +143,11 @@ st.markdown(
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        font-size: 0.75rem;
+        font-size: 0.78rem;
         font-weight: 700;
-        padding: 3px 8px;
+        padding: 4px 10px;
         border-radius: 6px;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
+        letter-spacing: 0.02em;
     }
     .badge-male {
         background: rgba(59, 130, 246, 0.2);
@@ -161,6 +160,14 @@ st.markdown(
         border: 1px solid rgba(236, 72, 153, 0.4);
     }
     
+    .anti-overlap-banner {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.25));
+        border: 1px solid rgba(16, 185, 129, 0.4);
+        border-radius: 10px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+    }
+
     .stButton>button {
         border-radius: 10px;
         font-weight: 600;
@@ -274,16 +281,15 @@ def export_subtitles_to_srt(subtitles: list[Subtitle]) -> str:
 
 
 # ==========================================
-# Audio Pitch & Character Gender Detection Engine
+# Character Alternation & Voice Assignment
 # ==========================================
 def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
-    """Estimates the fundamental frequency (F0) of speech samples using autocorrelation."""
     if len(samples) == 0:
         return 140.0
-    frame_len = int(sample_rate * 0.05)   # 50ms frame
-    hop_len = int(sample_rate * 0.025)    # 25ms hop
-    min_lag = int(sample_rate / 380)      # ~380 Hz max human F0
-    max_lag = int(sample_rate / 75)       # ~75 Hz min human F0
+    frame_len = int(sample_rate * 0.05)
+    hop_len = int(sample_rate * 0.025)
+    min_lag = int(sample_rate / 380)
+    max_lag = int(sample_rate / 75)
     pitches = []
 
     mean_energy = float(np.mean(samples**2)) if len(samples) > 0 else 0.0
@@ -312,84 +318,44 @@ def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
     return float(np.median(pitches)) if pitches else 140.0
 
 
-def detect_character_gender_for_segment(
-    audio_full: Optional[AudioSegment],
-    sub: Subtitle,
-    global_pitch: float = 140.0,
-) -> tuple[str, str, float]:
-    """Detects whether a character speaking in a subtitle line is Male or Female.
-    Returns: (gender: "Male"|"Female", voice: "km-KH-PisethNeural"|"km-KH-SreymomNeural", pitch_f0: float)
-    """
-    # 1. Text cues override
-    t_clean = sub.text.strip().lower()
-    female_cues = ("[ស្រី]", "[តួស្រី]", "[female]", "[woman]", "[girl]", "[sreymom]")
-    male_cues = ("[ប្រុស]", "[តួប្រុស]", "[male]", "[man]", "[boy]", "[piseth]")
-
-    if any(cue in t_clean for cue in female_cues):
-        return "Female", "km-KH-SreymomNeural", 210.0
-    if any(cue in t_clean for cue in male_cues):
-        return "Male", "km-KH-PisethNeural", 125.0
-
-    # 2. Acoustic pitch estimation from original audio clip
-    if audio_full is not None and len(audio_full) > 0:
-        s_ms = max(0, sub.start_ms)
-        e_ms = min(len(audio_full), sub.end_ms)
-        if e_ms > s_ms + 200:
-            try:
-                clip = audio_full[s_ms:e_ms]
-                audio_16k = clip.set_channels(1).set_frame_rate(16000)
-                samples = np.array(audio_16k.get_array_of_samples(), dtype=np.float32)
-                f0 = estimate_pitch_f0(samples, 16000)
-                # Male F0 is typically 85-155Hz, Female F0 is typically 160-280Hz
-                if f0 < 160.0:
-                    return "Male", "km-KH-PisethNeural", round(f0, 1)
-                else:
-                    return "Female", "km-KH-SreymomNeural", round(f0, 1)
-            except Exception:
-                pass
-
-    # 3. Fallback based on global audio pitch
-    if global_pitch < 160.0:
-        return "Male", "km-KH-PisethNeural", global_pitch
-    else:
-        return "Female", "km-KH-SreymomNeural", global_pitch
-
-
 def assign_character_voices_to_subtitles(
     subtitles: list[Subtitle],
-    mode: str,
+    mode: str = "alternate_mf",
     media_path: Optional[Path] = None,
 ) -> list[Subtitle]:
-    """Assigns voice and gender to all subtitles according to selected mode:
-    - "auto": Auto-detect male/female by audio pitch
+    """Assigns voices with seamless male/female alternation (ឆ្លាស់ប្រុសស្រី):
+    - "alternate_mf": Line 1 Male (Piseth 👨), Line 2 Female (Sreymom 👩), Line 3 Male...
+    - "alternate_fm": Line 1 Female (Sreymom 👩), Line 2 Male (Piseth 👨), Line 3 Female...
+    - "auto": Acoustic pitch detection per line with dialogue alternation smoothing
     - "male": Male (Piseth) only
     - "female": Female (Sreymom) only
-    - "alternate": Alternates line by line
     """
     if not subtitles:
         return []
 
     audio_full = None
-    global_pitch = 140.0
     if mode == "auto" and media_path and media_path.exists():
         try:
             audio_full = AudioSegment.from_file(media_path)
-            sample_clip = audio_full[:60000].set_channels(1).set_frame_rate(16000)
-            samples = np.array(sample_clip.get_array_of_samples(), dtype=np.float32)
-            global_pitch = estimate_pitch_f0(samples, 16000)
         except Exception:
             audio_full = None
 
     for idx, s in enumerate(subtitles):
-        if mode == "male":
-            s.detected_gender = "Male"
-            s.assigned_voice = "km-KH-PisethNeural"
-            s.pitch_f0 = 125.0
-        elif mode == "female":
+        # Text cue overrides take highest priority
+        t_clean = s.text.strip().lower()
+        if any(c in t_clean for c in ("[ស្រី]", "[តួស្រី]", "[female]", "[sreymom]")):
             s.detected_gender = "Female"
             s.assigned_voice = "km-KH-SreymomNeural"
             s.pitch_f0 = 210.0
-        elif mode == "alternate":
+            continue
+        elif any(c in t_clean for c in ("[ប្រុស]", "[តួប្រុស]", "[male]", "[piseth]")):
+            s.detected_gender = "Male"
+            s.assigned_voice = "km-KH-PisethNeural"
+            s.pitch_f0 = 125.0
+            continue
+
+        if mode == "alternate_mf":
+            # ឆ្លាស់ប្រុស 👨 និង ស្រី 👩 (ចាប់ផ្តើមដោយប្រុស)
             if idx % 2 == 0:
                 s.detected_gender = "Male"
                 s.assigned_voice = "km-KH-PisethNeural"
@@ -398,11 +364,43 @@ def assign_character_voices_to_subtitles(
                 s.detected_gender = "Female"
                 s.assigned_voice = "km-KH-SreymomNeural"
                 s.pitch_f0 = 210.0
+        elif mode == "alternate_fm":
+            # ឆ្លាស់ស្រី 👩 និង ប្រុស 👨 (ចាប់ផ្តើមដោយស្រី)
+            if idx % 2 == 0:
+                s.detected_gender = "Female"
+                s.assigned_voice = "km-KH-SreymomNeural"
+                s.pitch_f0 = 210.0
+            else:
+                s.detected_gender = "Male"
+                s.assigned_voice = "km-KH-PisethNeural"
+                s.pitch_f0 = 125.0
+        elif mode == "male":
+            s.detected_gender = "Male"
+            s.assigned_voice = "km-KH-PisethNeural"
+            s.pitch_f0 = 125.0
+        elif mode == "female":
+            s.detected_gender = "Female"
+            s.assigned_voice = "km-KH-SreymomNeural"
+            s.pitch_f0 = 210.0
         else:  # "auto"
-            g, v, p = detect_character_gender_for_segment(audio_full, s, global_pitch)
-            s.detected_gender = g
-            s.assigned_voice = v
-            s.pitch_f0 = p
+            assigned_g = "Male"
+            if audio_full is not None:
+                s_ms = max(0, s.start_ms)
+                e_ms = min(len(audio_full), s.end_ms)
+                if e_ms > s_ms + 250:
+                    try:
+                        clip = audio_full[s_ms:e_ms].set_channels(1).set_frame_rate(16000)
+                        samples = np.array(clip.get_array_of_samples(), dtype=np.float32)
+                        f0 = estimate_pitch_f0(samples, 16000)
+                        assigned_g = "Female" if f0 >= 160.0 else "Male"
+                        s.pitch_f0 = round(f0, 1)
+                    except Exception:
+                        assigned_g = "Male" if idx % 2 == 0 else "Female"
+            else:
+                assigned_g = "Male" if idx % 2 == 0 else "Female"
+            
+            s.detected_gender = assigned_g
+            s.assigned_voice = "km-KH-PisethNeural" if assigned_g == "Male" else "km-KH-SreymomNeural"
 
     return subtitles
 
@@ -450,9 +448,10 @@ def init_session():
         "srt_text_khmer": "",
         "voiceover_clips": {},
         "master_mp3_path": None,
-        "voice_mode": "auto",  # auto, male, female, alternate
+        "voice_mode": "alternate_mf",  # Default to alternating male/female (ឆ្លាស់ប្រុសស្រី)
         "selected_speed": "+0%",
         "selected_pitch": "+0Hz",
+        "breathing_pause_ms": 200,  # 200ms anti-collision breathing gap
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -737,7 +736,6 @@ def generate_all_tts(subtitles: list[Subtitle], default_voice: str, rate: str, p
     failed = []
 
     for idx, s in enumerate(subtitles, start=1):
-        # Use line-specific assigned character voice, or fallback to default
         line_voice = s.assigned_voice or default_voice
         voice_tag = "piseth" if "piseth" in line_voice.lower() else "sreymom"
         clip_p = tts_dir / f"line_{s.index}_{voice_tag}.mp3"
@@ -763,53 +761,89 @@ def generate_all_tts(subtitles: list[Subtitle], default_voice: str, rate: str, p
     return audio_map
 
 
-# 4. Render Master MP3 Audio
+# 4. Render Master MP3 Audio with Anti-Collision / Anti-Overlapping Protection (កុំឱ្យតួអង្គនិយាយជាន់គ្នា)
 def render_dubbed_mp3(
     subtitles: list[Subtitle],
     audio_map: dict[int, str],
     video_dur_ms: int = 0,
     bgm_path: Optional[Path] = None,
     bgm_vol_db: float = -18.0,
+    min_pause_ms: int = 200,
     p_bar=None,
     p_status=None,
 ) -> Path:
+    """Renders final master MP3 ensuring ZERO speech overlapping (កុំឱ្យតួអង្គនិយាយជាន់គ្នាដាច់ខាត).
+    Each line begins at or after its SRT timestamp, but if the previous character hasn't finished,
+    the start time is seamlessly sequenced with a natural breathing pause (min_pause_ms).
+    """
     if not subtitles or not audio_map:
         raise ValueError("Missing subtitles or voiced clips to render.")
 
-    max_end = max(s.end_ms for s in subtitles) if subtitles else 0
-    total_len = max(video_dur_ms, max_end + 1000)
-
-    if p_status: p_status.text("🎼 Initializing silent audio timeline...")
+    if p_status: p_status.text("🎼 Computing timeline and anti-collision placement...")
     if p_bar: p_bar.progress(10)
 
-    timeline = AudioSegment.silent(duration=total_len)
+    # First pass: load clips and calculate non-overlapping placements
+    placements = []
+    last_speech_end = 0
 
-    total_subs = len(subtitles)
-    for idx, s in enumerate(subtitles):
+    for s in subtitles:
         clip_str = audio_map.get(s.index)
-        if clip_str and Path(clip_str).exists():
-            try:
-                clip = AudioSegment.from_file(clip_str)
-                timeline = timeline.overlay(clip, position=s.start_ms)
-            except Exception:
-                pass
-        if p_bar:
-            p_bar.progress(10 + int(70 * (idx + 1) / total_subs))
+        if not clip_str or not Path(clip_str).exists():
+            continue
+        try:
+            clip = AudioSegment.from_file(clip_str)
+            clip_dur = len(clip)
 
-    # Background Music Blending
+            # ANTI-OVERLAP COLLISION PREVENTION:
+            # If the subtitle start_ms is before the previous character finishes + pause:
+            target_start = s.start_ms
+            if target_start < last_speech_end + min_pause_ms:
+                # Seamlessly sequence speech so voices NEVER talk over each other
+                target_start = last_speech_end + min_pause_ms
+
+            placements.append({
+                "clip": clip,
+                "start_ms": target_start,
+                "end_ms": target_start + clip_dur,
+            })
+            last_speech_end = target_start + clip_dur
+        except Exception:
+            pass
+
+    # Canvas duration must accommodate the final speaker's speech
+    final_speech_end = max((p["end_ms"] for p in placements), default=0)
+    total_canvas_len = max(video_dur_ms, final_speech_end + 1500)
+
+    timeline = AudioSegment.silent(duration=total_canvas_len)
+
+    # Second pass: composite clips onto timeline
+    total_clips = len(placements)
+    for idx, p in enumerate(placements):
+        clip = p["clip"]
+        st_pos = p["start_ms"]
+        # Extend canvas if needed
+        if st_pos + len(clip) > len(timeline):
+            timeline = timeline + AudioSegment.silent(duration=(st_pos + len(clip) - len(timeline) + 3000))
+        timeline = timeline.overlay(clip, position=st_pos)
+
+        if p_bar:
+            p_bar.progress(10 + int(70 * (idx + 1) / max(1, total_clips)))
+
+    # Background Music Blending with Smooth Fade Out
     if bgm_path and bgm_path.exists():
         if p_status: p_status.text("🎶 Blending background music track...")
         try:
             bgm = AudioSegment.from_file(bgm_path) + bgm_vol_db
-            if len(bgm) < total_len:
-                loops = (total_len // len(bgm)) + 1
-                bgm = (bgm * loops)[:total_len]
+            cur_dur = len(timeline)
+            if len(bgm) < cur_dur:
+                loops = (cur_dur // len(bgm)) + 1
+                bgm = (bgm * loops)[:cur_dur]
             else:
-                bgm = bgm[:total_len]
-            bgm = bgm.fade_out(1500)
+                bgm = bgm[:cur_dur]
+            bgm = bgm.fade_out(2000)
             timeline = timeline.overlay(bgm, position=0)
         except Exception as e:
-            st.warning(f"BGM blend error: {e}")
+            st.warning(f"BGM blend notice: {e}")
 
     out_file = USER_DIR / f"master_voiceover_{int(time.time())}.mp3"
     if p_status: p_status.text("📦 Exporting master 192kbps MP3...")
@@ -848,19 +882,37 @@ with st.sidebar:
 
     whisper_model = st.selectbox("Whisper STT Accuracy", options=["base", "tiny", "small"], index=0)
 
-    st.markdown("#### 🎭 Character Voice / Gender Mode")
+    st.markdown("#### 🎭 តួអង្គឆ្លាស់ប្រុសស្រី (Character Mode)")
+    mode_options = [
+        ("alternate_mf", "🔄 ឆ្លាស់ប្រុស 👨 និង ស្រី 👩 (ចាប់ផ្តើមប្រុស)"),
+        ("alternate_fm", "🔄 ឆ្លាស់ស្រី 👩 និង ប្រុស 👨 (ចាប់ផ្តើមស្រី)"),
+        ("auto", "🤖 ស្វ័យប្រវត្តិតាមសំឡេងដើម (Pitch Detect)"),
+        ("male", "👨 ប្រុសតែមួយ (Piseth)"),
+        ("female", "👩 ស្រីតែមួយ (Sreymom)"),
+    ]
+    cur_idx = 0
+    for idx_opt, (k_val, _) in enumerate(mode_options):
+        if st.session_state.voice_mode == k_val:
+            cur_idx = idx_opt
+            break
+
     v_mode = st.radio(
         "Voice Assignment Mode",
-        options=[
-            ("auto", "🤖 Auto Detect Male/Female (Acoustic Pitch)"),
-            ("male", "👨 Male (Piseth - ពិសិដ្ឋ) Only"),
-            ("female", "👩 Female (Sreymom - ស្រីមុំ) Only"),
-            ("alternate", "🔄 Alternate (Male 👨 / Female 👩)"),
-        ],
+        options=mode_options,
         format_func=lambda x: x[1],
-        index=0 if st.session_state.voice_mode == "auto" else (1 if st.session_state.voice_mode == "male" else (2 if st.session_state.voice_mode == "female" else 3)),
+        index=cur_idx,
     )
     st.session_state.voice_mode = v_mode[0]
+
+    st.markdown("#### 🛡️ ការពារកុំឱ្យនិយាយជាន់គ្នា (Anti-Overlap)")
+    st.session_state.breathing_pause_ms = st.slider(
+        "ចន្លោះពេលដកដង្ហើមរវាងតួអង្គ (Pause Gap)",
+        min_value=100,
+        max_value=600,
+        value=st.session_state.breathing_pause_ms,
+        step=50,
+        help="ធានាថាតួអង្គមិននិយាយជាន់គ្នាដាច់ខាត ដោយទុកចន្លោះពេលធម្មជាតិមុនតួអង្គបន្ទាប់និយាយ",
+    )
 
     st.session_state.selected_speed = st.select_slider(
         "Speech Speed / ល្បឿនសំឡេង",
@@ -899,13 +951,13 @@ st.markdown(
                     🎙️ Dubber AI Pro Studio
                 </h1>
                 <p style="color: #94a3b8; font-size: 0.95rem; margin: 6px 0 0 0;">
-                    Video $\\rightarrow$ SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ Character Gender Detection $\\rightarrow$ Master MP3
+                    Video $\\rightarrow$ SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ ឆ្លាស់ប្រុសស្រី (No-Overlap) $\\rightarrow$ Master MP3
                 </p>
             </div>
             <div style="display: flex; gap: 10px; margin-top: 10px;">
                 <span class="stat-badge">📝 {len(st.session_state.subtitles_orig)} Lines</span>
-                <span class="stat-badge">🎭 Mode: {st.session_state.voice_mode.upper()}</span>
-                <span class="stat-badge">🎙️ {len(st.session_state.voiceover_clips)} Voiced</span>
+                <span class="stat-badge">🎭 {st.session_state.voice_mode.upper()}</span>
+                <span class="stat-badge">🛡️ Anti-Overlap: {st.session_state.breathing_pause_ms}ms</span>
             </div>
         </div>
     </div>
@@ -923,7 +975,7 @@ with c_p2:
     st.markdown(f"<div class='step-pill {act}'><div class='step-num num-2'>2</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 2</div><div style='font-weight:700;'>Translate Khmer</div></div></div>", unsafe_allow_html=True)
 with c_p3:
     act = "active" if st.session_state.current_step == 3 else ("completed" if st.session_state.voiceover_clips else "")
-    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-3'>3</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 3</div><div style='font-weight:700;'>Character TTS</div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-3'>3</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 3</div><div style='font-weight:700;'>ឆ្លាស់ប្រុសស្រី TTS</div></div></div>", unsafe_allow_html=True)
 with c_p4:
     act = "active" if st.session_state.current_step == 4 else ("completed" if st.session_state.master_mp3_path else "")
     st.markdown(f"<div class='step-pill {act}'><div class='step-num num-4'>4</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 4</div><div style='font-weight:700;'>Render MP3</div></div></div>", unsafe_allow_html=True)
@@ -935,7 +987,7 @@ tab_auto, tab1, tab2, tab3, tab4 = st.tabs([
     "⚡ 1-Click Auto Pipeline",
     "1️⃣ Transcribe Video $\\rightarrow$ SRT",
     "2️⃣ Translate SRT $\\rightarrow$ Khmer",
-    "3️⃣ Character Voice-Over TTS",
+    "3️⃣ ឆ្លាស់ប្រុសស្រី Voice TTS",
     "4️⃣ Render Master MP3",
 ])
 
@@ -946,8 +998,8 @@ with tab_auto:
     st.markdown(
         """
         <div class="studio-card">
-            <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Hands-Free Pipeline with Character Gender Detection</h3>
-            <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will transcribe, translate to Khmer, automatically detect whether each character speaking is Male (Piseth 👨) or Female (Sreymom 👩), and render your final master MP3.</p>
+            <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Pipeline (ឆ្លាស់ប្រុសស្រី & គ្មានការនិយាយជាន់គ្នា)</h3>
+            <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will transcribe, translate to Khmer, alternate characters between Male (Piseth 👨) and Female (Sreymom 👩), guarantee zero speech overlap, and render your final master MP3.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -961,7 +1013,15 @@ with tab_auto:
         )
     with c_au2:
         auto_bgm_file = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="auto_pipe_bgm")
-        st.caption(f"Character Mode: **{st.session_state.voice_mode.upper()}** | Speed: **{st.session_state.selected_speed}**")
+        st.markdown(
+            f"""
+            <div class="anti-overlap-banner">
+                <span style="color:#34d399; font-weight:700;">🛡️ Anti-Overlap System Active</span><br>
+                <span style="font-size:0.85rem; color:#d1d5db;">តួអង្គនឹងមិននិយាយជាន់គ្នាដាច់ខាត។ ចន្លោះដកដង្ហើម: <b>{st.session_state.breathing_pause_ms}ms</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     if auto_file:
         if st.button("🚀 Run 1-Click Dubbing Pipeline Now", type="primary", use_container_width=True):
@@ -989,15 +1049,15 @@ with tab_auto:
                 status_box.write("🇰🇭 **Step 2/4**: Translating to natural Khmer dialogue...")
                 subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
                 
-                # Assign Character Gender & Voice
-                status_box.write("🎭 **Character Detection**: Analyzing character pitch (Male 👨 / Female 👩)...")
+                # Assign Character Alternation (ឆ្លាស់ប្រុសស្រី)
+                status_box.write("🎭 **Character Alternation**: Assigning alternating Male 👨 and Female 👩 voices...")
                 subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, saved)
                 st.session_state.subtitles_khmer = subs2
                 st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
-                status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated and character-classified.")
+                status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated and character-assigned.")
 
                 # Step 3
-                status_box.write("🎙️ **Step 3/4**: Synthesizing neural voice-over per character (auto-retry active)...")
+                status_box.write("🎙️ **Step 3/4**: Synthesizing neural speech (infinite auto-retry active)...")
                 clips = generate_all_tts(
                     subs2,
                     "km-KH-PisethNeural",
@@ -1008,19 +1068,20 @@ with tab_auto:
                 st.session_state.voiceover_clips = clips
                 status_box.write(f"✓ Step 3 Complete: {len(clips)} lines synthesized.")
 
-                # Step 4
-                status_box.write("🎧 **Step 4/4**: Rendering master MP3 audio track...")
+                # Step 4: Render MP3 with Anti-Overlap
+                status_box.write("🎧 **Step 4/4**: Rendering master MP3 (preventing any voice overlap)...")
                 final_out = render_dubbed_mp3(
                     subs2,
                     clips,
                     st.session_state.video_duration_ms,
                     bgm_p,
                     -18.0,
+                    st.session_state.breathing_pause_ms,
                     p_bar,
                 )
                 st.session_state.master_mp3_path = str(final_out)
                 st.session_state.current_step = 4
-                status_box.update(label="🎉 Full Pipeline Complete!", state="complete")
+                status_box.update(label="🎉 Full Pipeline Complete (No-Overlap Verified)!", state="complete")
                 st.balloons()
             except Exception as e:
                 status_box.update(label=f"❌ Error: {e}", state="error")
@@ -1032,7 +1093,7 @@ with tab_auto:
         st.markdown(
             """
             <div class="studio-card" style="border-color: rgba(16, 185, 129, 0.4);">
-                <h3 style="margin-top:0; color:#34d399;">🎧 Master Dubbed MP3 Ready!</h3>
+                <h3 style="margin-top:0; color:#34d399;">🎧 Master Dubbed MP3 Ready! (ឆ្លាស់ប្រុសស្រី • មិនជាន់គ្នា)</h3>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1111,7 +1172,7 @@ with tab1:
 # ---------------------------------------------------------------------
 with tab2:
     st.markdown("### 2️⃣ Translate SRT to Natural Khmer (ភាសាខ្មែរ)")
-    st.caption("Translates subtitle dialogue into natural, fluent Khmer speech while strictly preserving millisecond timestamps.")
+    st.caption("Translates subtitle dialogue into natural, fluent Khmer speech while preserving line alignment.")
 
     source_srt_input = st.text_area(
         "Source SRT Subtitles",
@@ -1133,7 +1194,7 @@ with tab2:
             with st.spinner("Translating to natural Khmer with Gemini..."):
                 try:
                     khmer_subs = translate_subtitles_khmer(parsed, input_key or current_key, bar2, status2)
-                    # Run character voice assignment
+                    # Run character voice assignment (ឆ្លាស់ប្រុសស្រី)
                     khmer_subs = assign_character_voices_to_subtitles(
                         khmer_subs,
                         st.session_state.voice_mode,
@@ -1163,17 +1224,17 @@ with tab2:
                 use_container_width=True,
             )
         with c_dk2:
-            if st.button("Proceed to Step 3: Character Voice-Over TTS ➔", use_container_width=True):
+            if st.button("Proceed to Step 3: ឆ្លាស់ប្រុសស្រី TTS ➔", use_container_width=True):
                 st.session_state.current_step = 3
                 st.rerun()
 
 
 # ---------------------------------------------------------------------
-# TAB 3: CHARACTER VOICE-OVER TTS (AUTO-RETRY ACTIVE)
+# TAB 3: ឆ្លាស់ប្រុសស្រី VOICE-OVER TTS (AUTO-RETRY ACTIVE)
 # ---------------------------------------------------------------------
 with tab3:
-    st.markdown("### 3️⃣ Character Voice-Over TTS (Auto-Detection Active)")
-    st.caption("Synthesizes studio-quality Khmer speech for each character. Uses acoustic pitch analysis to automatically assign Piseth (Male 👨) or Sreymom (Female 👩).")
+    st.markdown("### 3️⃣ ឆ្លាស់ប្រុសស្រី Voice-Over TTS (Auto-Retry Active)")
+    st.caption("សំឡេងនិយាយនឹងឆ្លាស់គ្នារវាងតួប្រុស (Piseth 👨) និងតួស្រី (Sreymom 👩) តាមជួរនីមួយៗ យ៉ាងរលូន។")
 
     kh_subs = st.session_state.subtitles_khmer
     if not kh_subs and st.session_state.srt_text_khmer:
@@ -1184,31 +1245,39 @@ with tab3:
     c_vinfo1, c_vinfo2 = st.columns([3, 2])
     with c_vinfo1:
         st.write(f"Subtitle Lines to Voice: **{len(kh_subs)}**")
-        st.write(f"Character Mode: **{st.session_state.voice_mode.upper()}** | Speed: **{st.session_state.selected_speed}**")
+        st.write(f"Voice Mode: **{st.session_state.voice_mode.upper()}** | Speed: **{st.session_state.selected_speed}**")
         
-        # Option to re-run character gender detection
-        if st.button("🔍 Re-Detect Characters (Male/Female)"):
-            kh_subs = assign_character_voices_to_subtitles(kh_subs, st.session_state.voice_mode, st.session_state.media_path)
-            st.session_state.subtitles_khmer = kh_subs
-            st.success("Re-detected character voices for all lines!")
-            st.rerun()
+        # Quick re-alternate button
+        c_alt1, c_alt2 = st.columns(2)
+        with c_alt1:
+            if st.button("🔄 ចាប់ផ្តើម 👨 ប្រុសមុន"):
+                st.session_state.voice_mode = "alternate_mf"
+                kh_subs = assign_character_voices_to_subtitles(kh_subs, "alternate_mf", st.session_state.media_path)
+                st.session_state.subtitles_khmer = kh_subs
+                st.rerun()
+        with c_alt2:
+            if st.button("🔄 ចាប់ផ្តើម 👩 ស្រីមុន"):
+                st.session_state.voice_mode = "alternate_fm"
+                kh_subs = assign_character_voices_to_subtitles(kh_subs, "alternate_fm", st.session_state.media_path)
+                st.session_state.subtitles_khmer = kh_subs
+                st.rerun()
 
     with c_vinfo2:
         st.markdown(
             """
             <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 10px; padding: 12px;">
                 <span style="color: #34d399; font-weight: 700;">🛡️ Infinite Auto-Retry Active</span><br>
-                <span style="font-size: 0.85rem; color: #cbd5e1;">Retries Edge-TTS up to 5x with backoff, then auto-falls back to gTTS Khmer.</span>
+                <span style="font-size: 0.85rem; color: #cbd5e1;">មិនបារម្ភរឿងខកខាន ឬដាច់សំឡេងឡើយ។ ប្រព័ន្ធព្យាយាមបង្កើតសំឡេងឡើងវិញដោយស្វ័យប្រវត្តិ។</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
     if kh_subs:
-        if st.button("🎙️ Generate All Character Voice-Over Lines", type="primary", use_container_width=True):
+        if st.button("🎙️ Generate All Alternating Voice-Over Lines", type="primary", use_container_width=True):
             bar3 = st.progress(0)
             status3 = st.empty()
-            with st.spinner("Synthesizing character speech with auto-retry..."):
+            with st.spinner("Synthesizing alternating male/female speech with auto-retry..."):
                 clips = generate_all_tts(
                     kh_subs,
                     "km-KH-PisethNeural",
@@ -1219,12 +1288,12 @@ with tab3:
                 )
                 st.session_state.voiceover_clips = clips
                 st.session_state.current_step = 4
-                st.success(f"✓ Generated {len(clips)} voice lines successfully!")
+                st.success(f"✓ Generated {len(clips)} alternating voice lines successfully!")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("#### 🎧 Character Line Breakdown & Audio Previews")
+        st.markdown("#### 🎧 តារាងសំឡេងតួអង្គឆ្លាស់គ្នា (Line Breakdown)")
         
-        # Display preview list with character badges and override
+        # Display preview list with character badges and toggle
         for s in kh_subs[:45]:
             col_id, col_char, col_txt, col_aud = st.columns([1, 2, 5, 3])
             with col_id:
@@ -1233,18 +1302,16 @@ with tab3:
             with col_char:
                 is_male = "piseth" in s.assigned_voice.lower()
                 b_class = "badge-male" if is_male else "badge-female"
-                g_icon = "👨 Piseth" if is_male else "👩 Sreymom"
+                g_icon = "👨 Piseth (ប្រុស)" if is_male else "👩 Sreymom (ស្រី)"
                 st.markdown(f"<span class='gender-badge {b_class}'>{g_icon}</span>", unsafe_allow_html=True)
-                st.caption(f"Pitch: {s.pitch_f0:.0f}Hz")
                 
                 # Switch character voice button
                 new_voice = "km-KH-SreymomNeural" if is_male else "km-KH-PisethNeural"
                 new_gender = "Female" if is_male else "Male"
-                toggle_lbl = "Change to 👩" if is_male else "Change to 👨"
+                toggle_lbl = "ប្តូរទៅ 👩" if is_male else "ប្តូរទៅ 👨"
                 if st.button(toggle_lbl, key=f"tgl_{s.index}"):
                     s.assigned_voice = new_voice
                     s.detected_gender = new_gender
-                    # Clear cached audio for this line so it regenerates
                     vtag = "sreymom" if is_male else "piseth"
                     out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
                     generate_tts_clip_with_resilience(s.text, new_voice, st.session_state.selected_speed, "+0Hz", out_p)
@@ -1284,11 +1351,23 @@ with tab3:
 
 
 # ---------------------------------------------------------------------
-# TAB 4: RENDER MASTER MP3
+# TAB 4: RENDER MASTER MP3 (ANTI-OVERLAP ACTIVE)
 # ---------------------------------------------------------------------
 with tab4:
-    st.markdown("### 4️⃣ Render Master MP3 Audio")
-    st.caption("Stitches all dialogue lines at their exact SRT timestamps into a single, high-fidelity MP3 master file.")
+    st.markdown("### 4️⃣ Render Master MP3 Audio (កុំឱ្យនិយាយជាន់គ្នា)")
+    st.caption("ផ្គុំសំឡេងតួអង្គទាំងអស់ចូលគ្នា ដោយធានាថាមិនមានការនិយាយជាន់គ្នាដាច់ខាត (No-Collision Sequencing)។")
+
+    st.markdown(
+        f"""
+        <div class="anti-overlap-banner">
+            <h4 style="margin: 0 0 4px 0; color: #34d399;">🛡️ ប្រព័ន្ធការពារការនិយាយជាន់គ្នា (Anti-Overlap Collision Prevention)</h4>
+            <p style="margin: 0; font-size: 0.88rem; color: #e2e8f0;">
+                ប្រសិនបើតួអង្គមុននិយាយមិនទាន់ចប់ នោះតួអង្គបន្ទាប់នឹងរង់ចាំរហូតដល់តួអង្គមុននិយាយចប់សព្វគ្រប់ បូកបន្ថែមចន្លោះដកដង្ហើមធម្មជាតិ <b>{st.session_state.breathing_pause_ms}ms</b> ទើបចាប់ផ្តើមនិយាយ!
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     c_rend1, c_rend2 = st.columns([3, 2])
     with c_rend1:
@@ -1296,17 +1375,10 @@ with tab4:
         step4_bgm = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="step4_bgm_file")
         bgm_duck_vol = st.slider("BGM Ducking Level (dB)", min_value=-30.0, max_value=-6.0, value=-18.0, step=1.0)
     with c_rend2:
-        st.markdown(
-            """
-            <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; border-radius: 10px; padding: 12px;">
-                <span style="color: #60a5fa; font-weight: 700;">⏱️ Exact Timestamp Positioning</span><br>
-                <span style="font-size: 0.85rem; color: #cbd5e1;">Each character's voiced segment is placed on the audio timeline matching its exact start timestamp.</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.write(f"Active Pause Gap: **{st.session_state.breathing_pause_ms} ms**")
+        st.caption("អ្នកអាចកែសម្រួលចន្លោះពេលដកដង្ហើម (Pause Gap) នៅលើ Sidebar ខាងឆ្វេង។")
 
-    if st.button("🎵 Render Final Master MP3", type="primary", use_container_width=True):
+    if st.button("🎵 Render Final Master MP3 Now", type="primary", use_container_width=True):
         if not st.session_state.voiceover_clips:
             st.error("No voice-over clips available. Please run Step 3 first.")
         else:
@@ -1317,7 +1389,7 @@ with tab4:
 
             bar4 = st.progress(0)
             status4 = st.empty()
-            with st.spinner("Rendering and mastering high-fidelity MP3..."):
+            with st.spinner("Rendering MP3 with Anti-Overlap Protection..."):
                 try:
                     mp3_res = render_dubbed_mp3(
                         st.session_state.subtitles_khmer,
@@ -1325,11 +1397,12 @@ with tab4:
                         st.session_state.video_duration_ms,
                         bgm_obj,
                         bgm_duck_vol,
+                        st.session_state.breathing_pause_ms,
                         bar4,
                         status4,
                     )
                     st.session_state.master_mp3_path = str(mp3_res)
-                    st.success("✓ Master MP3 Rendered Successfully!")
+                    st.success("✓ Master MP3 Rendered Successfully with Zero Voice Overlap!")
                 except Exception as ex:
                     st.error(f"Render failed: {ex}")
 
@@ -1339,7 +1412,7 @@ with tab4:
         st.markdown(
             """
             <div class="studio-card" style="border-color: rgba(16, 185, 129, 0.4);">
-                <h3 style="margin-top:0; color:#34d399;">🎧 Master Audio Player</h3>
+                <h3 style="margin-top:0; color:#34d399;">🎧 Master Audio Player (គ្មានការនិយាយជាន់គ្នា)</h3>
             </div>
             """,
             unsafe_allow_html=True,
