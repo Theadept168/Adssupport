@@ -1854,40 +1854,6 @@ with st.sidebar:
     else:
         chosen_global_lang = "auto"
 
-    # Dedicated Voice Detector Tool (មុខងារពិនិត្យ និងចាប់សំឡេង)
-    with st.expander("🔍 ឧបករណ៍ចាប់សំឡេង (Voice Detector)", expanded=False):
-        st.caption("ពិនិត្យចាប់សំឡេងប្រុស ឬស្រី (Acoustic Pitch Analysis)")
-        test_voice_file = st.file_uploader("Upload Audio to Test", type=["mp3", "wav", "m4a", "mp4"], key="test_voice_uploader")
-        c_tst1, c_tst2 = st.columns(2)
-        with c_tst1:
-            run_test = st.button("🎙️ Detect Clip", use_container_width=True)
-        with c_tst2:
-            run_curr = st.button("🎙️ Detect Video", use_container_width=True, disabled=not st.session_state.media_path)
-        
-        target_detect = None
-        if run_test and test_voice_file:
-            target_detect = USER_DIR / f"test_voice_{int(time.time())}{Path(test_voice_file.name).suffix}"
-            target_detect.write_bytes(test_voice_file.getbuffer())
-        elif run_curr and st.session_state.media_path:
-            target_detect = st.session_state.media_path
-
-        if target_detect:
-            res = detect_voice(target_detect)
-            b_clr = "#93c5fd" if res["gender"] == "Male" else "#f472b6"
-            st.markdown(
-                f"""
-                <div style="background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; margin-top: 8px;">
-                    <div style="font-size: 1.05rem; font-weight: 700; color: {b_clr};">{res['icon']} {res['name']}</div>
-                    <div style="font-size: 0.85rem; color: #cbd5e1; margin-top: 4px;">
-                        ● Pitch: <b>{res['pitch_hz']} Hz</b><br>
-                        ● Confidence: <b>{res['confidence']}</b><br>
-                        ● Voice: <b>{res['voice']}</b>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
 
     st.markdown("#### 🎭 តួអង្គឆ្លាស់ប្រុសស្រី (Character Mode)")
     mode_options = [
@@ -1989,75 +1955,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Step Indicator Pills
-c_p1, c_p2, c_p3, c_p4 = st.columns(4)
-with c_p1:
-    act = "active" if st.session_state.current_step == 1 else ("completed" if st.session_state.subtitles_orig else "")
-    chk = " ✓" if st.session_state.subtitles_orig else ""
-    st.markdown(
-        f"""
-        <div class='step-pill {act}'>
-            <div class='step-num num-1'>1</div>
-            <div style='overflow:hidden;'>
-                <div style='font-size:0.72rem; font-weight:700; color:#38bdf8; letter-spacing:0.04em;'>STEP 01{chk}</div>
-                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Transcribe SRT</div>
-                <div style='font-size:0.75rem; color:#94a3b8;'>Gemini / Whisper</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with c_p2:
-    act = "active" if st.session_state.current_step == 2 else ("completed" if st.session_state.subtitles_khmer else "")
-    chk = " ✓" if st.session_state.subtitles_khmer else ""
-    st.markdown(
-        f"""
-        <div class='step-pill {act}'>
-            <div class='step-num num-2'>2</div>
-            <div style='overflow:hidden;'>
-                <div style='font-size:0.72rem; font-weight:700; color:#c084fc; letter-spacing:0.04em;'>STEP 02{chk}</div>
-                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Translate Khmer</div>
-                <div style='font-size:0.75rem; color:#94a3b8;'>Gemini Flash AI</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with c_p3:
-    act = "active" if st.session_state.current_step == 3 else ("completed" if st.session_state.voiceover_clips else "")
-    chk = " ✓" if st.session_state.voiceover_clips else ""
-    st.markdown(
-        f"""
-        <div class='step-pill {act}'>
-            <div class='step-num num-3'>3</div>
-            <div style='overflow:hidden;'>
-                <div style='font-size:0.72rem; font-weight:700; color:#f472b6; letter-spacing:0.04em;'>STEP 03{chk}</div>
-                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>ឆ្លាស់ប្រុសស្រី TTS</div>
-                <div style='font-size:0.75rem; color:#94a3b8;'>Neural Synthesis</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with c_p4:
-    act = "active" if st.session_state.current_step == 4 else ("completed" if st.session_state.master_mp3_path else "")
-    chk = " ✓" if st.session_state.master_mp3_path else ""
-    st.markdown(
-        f"""
-        <div class='step-pill {act}'>
-            <div class='step-num num-4'>4</div>
-            <div style='overflow:hidden;'>
-                <div style='font-size:0.72rem; font-weight:700; color:#34d399; letter-spacing:0.04em;'>STEP 04{chk}</div>
-                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Master MP3</div>
-                <div style='font-size:0.75rem; color:#94a3b8;'>Zero-Collision</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.markdown("<br>", unsafe_allow_html=True)
-
 if st.session_state.get("just_cleared_after_download"):
     st.markdown(
         """
@@ -2077,775 +1974,165 @@ if st.session_state.get("just_cleared_after_download"):
     )
     st.session_state.just_cleared_after_download = False
 
-# Main Studio Tabs
-tab_auto, tab1, tab2, tab3, tab4 = st.tabs([
-    "⚡ 1-Click Auto Pipeline",
-    "1️⃣ Transcribe Video $\\rightarrow$ SRT",
-    "2️⃣ Translate SRT $\\rightarrow$ Khmer",
-    "3️⃣ ឆ្លាស់ប្រុសស្រី Voice TTS",
-    "4️⃣ Render Master MP3",
-])
 
-# ---------------------------------------------------------------------
-# ⚡ 1-CLICK AUTO PIPELINE
-# ---------------------------------------------------------------------
-with tab_auto:
-    st.markdown(
-        """
-        <div class="studio-card">
-            <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Pipeline (ឆ្លាស់ប្រុសស្រី & គ្មានការនិយាយជាន់គ្នា)</h3>
-            <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will transcribe, translate to Khmer, alternate characters between Male (Piseth 👨) and Female (Sreymom 👩), guarantee zero speech overlap, and render your final master MP3.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+st.markdown(
+    """
+    <div class="studio-card">
+        <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Pipeline (ឆ្លាស់ប្រុសស្រី & គ្មានការនិយាយជាន់គ្នា)</h3>
+        <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will transcribe, translate to Khmer, alternate characters between Male (Piseth 👨) and Female (Sreymom 👩), guarantee zero speech overlap, and render your final master MP3.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+c_au1, c_au2 = st.columns([3, 2])
+with c_au1:
+    auto_file = st.file_uploader(
+        "Select Video, Audio, or SRT File",
+        type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a", "srt"],
+        key=f"auto_pipe_file_{st.session_state.get('uploader_key', 0)}",
+        help="Upload a video to transcribe & dub, OR upload an SRT file to generate voice-over directly!",
     )
-    c_au1, c_au2 = st.columns([3, 2])
-    with c_au1:
-        auto_file = st.file_uploader(
-            "Select Video, Audio, or SRT File",
-            type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a", "srt"],
-            key=f"auto_pipe_file_{st.session_state.get('uploader_key', 0)}",
-            help="Upload a video to transcribe & dub, OR upload an SRT file to generate voice-over directly!",
-        )
-    with c_au2:
-        auto_bgm_file = st.file_uploader(
-            "Optional Background Music (BGM)",
-            type=["mp3", "wav"],
-            key=f"auto_pipe_bgm_{st.session_state.get('uploader_key', 0)}",
-        )
-        st.markdown(
-            f"""
-            <div class="anti-overlap-banner">
-                <span style="color:#34d399; font-weight:700;">🛡️ Anti-Overlap System Active</span><br>
-                <span style="font-size:0.85rem; color:#d1d5db;">តួអង្គនឹងមិននិយាយជាន់គ្នាដាច់ខាត។ ចន្លោះដកដង្ហើម: <b>{st.session_state.breathing_pause_ms}ms</b></span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    if auto_file:
-        is_srt_input = auto_file.name.lower().endswith(".srt")
-        btn_label = "🚀 Run 1-Click Voice-Over from SRT" if is_srt_input else "🚀 Run 1-Click Dubbing Pipeline Now"
-        if st.button(btn_label, type="primary", use_container_width=True):
-            saved = USER_DIR / f"auto_in_{int(time.time())}{Path(auto_file.name).suffix}"
-            saved.write_bytes(auto_file.getbuffer())
-            st.session_state.media_path = saved
-
-            bgm_p = None
-            if auto_bgm_file:
-                bgm_p = USER_DIR / f"bgm_{int(time.time())}.mp3"
-                bgm_p.write_bytes(auto_bgm_file.getbuffer())
-
-            status_box = st.status("🎬 Running Full Pipeline...", expanded=True)
-            p_bar = st.progress(5)
-
-            try:
-                chosen_engine = "gemini" if "Gemini" in transcribe_engine else "whisper"
-                result = run_unified_dubbing_process(
-                    media_file=saved,
-                    bgm_file=bgm_p,
-                    api_key=input_key or current_key,
-                    transcribe_engine=chosen_engine,
-                    whisper_model=whisper_model,
-                    spoken_lang=chosen_global_lang,
-                    voice_mode=st.session_state.voice_mode,
-                    voice_speed=st.session_state.selected_speed,
-                    voice_pitch=st.session_state.selected_pitch,
-                    breathing_pause_ms=st.session_state.breathing_pause_ms,
-                    progress_bar=p_bar,
-                    status_box=status_box,
-                )
-
-                st.session_state.subtitles_orig = result["subtitles_orig"]
-                st.session_state.srt_text_orig = result["srt_text_orig"]
-                st.session_state.subtitles_khmer = result["subtitles_khmer"]
-                st.session_state.srt_text_khmer = result["srt_text_khmer"]
-                st.session_state.voiceover_clips = result["clips"]
-                st.session_state.master_mp3_path = result["master_mp3_path"]
-                st.session_state.current_step = 4
-                status_box.update(label="🎉 Full Pipeline Complete (All-In-One Unified Function Finished)!", state="complete")
-                st.balloons()
-            except Exception as e:
-                status_box.update(label=f"❌ Error: {e}", state="error")
-                st.error(f"Pipeline stopped: {e}")
-
-    if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
-        mp3_obj = Path(st.session_state.master_mp3_path)
-        mp3_bytes = mp3_obj.read_bytes()
-        zip_bytes = create_master_zip_bundle(mp3_obj, st.session_state.srt_text_khmer)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div class="studio-card" style="border: 1px solid rgba(52, 211, 153, 0.45); background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%);">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <div style="font-size: 2rem;">🎧</div>
-                        <div>
-                            <h3 style="margin: 0; color: #34d399; font-family: 'Outfit', 'Kantumruy Pro', sans-serif; font-weight: 800; font-size: 1.3rem;">
-                                Master Dubbed MP3 Studio Release
-                            </h3>
-                            <span style="font-size: 0.85rem; color: #cbd5e1;">ឆ្លាស់ប្រុសស្រី • គ្មានការនិយាយជាន់គ្នា (Zero-Collision) • Synced Timeline</span>
-                        </div>
-                    </div>
-                    <div class="soundwave-box">
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.audio(mp3_bytes, format="audio/mp3")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.checkbox(
-            "🧹 Auto-clear cache after downloading MP3 to make a new MP3 immediately (សម្អាត cache ស្វ័យប្រវត្តពេល download ចប់)",
-            value=st.session_state.get("auto_clear_after_download", True),
-            key="chk_auto_clear_tab0",
-            on_change=lambda: st.session_state.update(auto_clear_after_download=st.session_state.chk_auto_clear_tab0),
-        )
-
-        c_pipe_d1, c_pipe_d2, c_pipe_d3 = st.columns([2, 2, 2])
-        with c_pipe_d1:
-            st.download_button(
-                label="⬇️ Download Master MP3",
-                data=mp3_bytes,
-                file_name=f"dubbed_khmer_{mp3_obj.name}",
-                mime="audio/mp3",
-                type="primary",
-                key="btn_dl_mp3_tab0",
-                on_click=on_master_download,
-                use_container_width=True,
-            )
-        with c_pipe_d2:
-            st.download_button(
-                label="📦 Download Bundle (MP3 + SRT .ZIP)",
-                data=zip_bytes,
-                file_name="dubbed_khmer_master_bundle.zip",
-                mime="application/zip",
-                key="btn_dl_zip_tab0",
-                on_click=on_master_download,
-                use_container_width=True,
-            )
-        with c_pipe_d3:
-            st.download_button(
-                label="📄 Download Synced SRT",
-                data=st.session_state.srt_text_khmer,
-                file_name="synced_voiceover.srt",
-                mime="text/plain",
-                key="btn_dl_srt_tab0",
-                use_container_width=True,
-            )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        c_pipe_c1, c_pipe_c2 = st.columns([3, 1])
-        with c_pipe_c1:
-            st.info("💡 ក្រោយពេលទាញយក Master MP3 ឬ Zip Bundle រួចរាល់ ប្រព័ន្ធនឹងសម្អាត cache ដោយស្វ័យប្រវត្តដើម្បីធ្វើ MP3 ថ្មី។ អ្នកក៏អាចចុចប៊ូតុង Clear Cache ដោយផ្ទាល់បានដែរ។")
-        with c_pipe_c2:
-            if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab0", type="primary", use_container_width=True):
-                clear_user_cache(preserve_success_message=True)
-                st.rerun()
-
-
-# ---------------------------------------------------------------------
-# ---------------------------------------------------------------------
-# TAB 1: TRANSCRIBE VIDEO -> SRT / MAKE NEW FROM SRT
-# ---------------------------------------------------------------------
-with tab1:
-    st.markdown("### 1️⃣ Transcribe Video to SRT / Make Voice-Over from SRT")
-    st.caption("អ្នកអាចជ្រើសរើស Transcribe ពី Video ទៅជា Subtitle SRT ឬ បញ្ចូលឯកសារ SRT ផ្ទាល់ ដើម្បីបង្កើត Voice-Over ថ្មី។")
-
-    tab1_v, tab1_s = st.tabs([
-        "🎬 Transcribe Speech from Video",
-        "📄 Make New Voice-Over from SRT File",
-    ])
-
-    with tab1_v:
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            step1_uploader = st.file_uploader(
-                "Upload Video or Audio to Extract Subtitles",
-                type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
-                key=f"step1_file_{st.session_state.get('uploader_key', 0)}",
-            )
-        with c2:
-            st.markdown("**Transcription Engine**")
-            trans_engine_tab1 = st.radio(
-                "Speech Recognition AI",
-                options=["✨ Gemini Flash AI (Cloud - Recommended)", "💻 Whisper Local (Offline)"],
-                index=0,
-                key="tab1_engine_radio",
-                help="Gemini AI uses Google Multimodal API: ultra-fast, handles all languages, eliminates CPU lag and tensor errors."
-            )
-            tab1_spoken_choice = st.selectbox(
-                "🎙️ ភាសានិយាយក្នុងវីដេអូ (Spoken Language)",
-                options=[
-                    "🇰🇭 ភាសាខ្មែរ (Khmer - ចាប់សំឡេងខ្មែរ 100% ត្រឹមត្រូវអក្ខរាវិរុទ្ធ)",
-                    "🌐 Auto-Detect All Languages (ស្វ័យប្រវត្តិតាមសំឡេង)",
-                    "🇨🇳 ភាសាចិន (Chinese / Mandarin)",
-                    "🇬🇧 ភាសាអង់គ្លេស (English)",
-                    "🇹🇭 ភាសាថៃ (Thai)",
-                ],
-                index=0,
-                key="tab1_spoken_lang_select",
-                help="កំណត់ភាសានិយាយក្នុងវីដេអូ ដើម្បីឱ្យ AI ចាប់យកអត្ថបទ និងអក្ខរាវិរុទ្ធបានត្រឹមត្រូវបំផុត"
-            )
-            if "Gemini" in trans_engine_tab1:
-                tab1_target_lang = st.radio(
-                    "Output Subtitle Language",
-                    options=["Original Spoken Language (Standard SRT - អត្ថបទតាមសំឡេង)", "Direct to Khmer SRT (បកប្រែជាភាសាខ្មែរភ្លាមៗ)"],
-                    index=0,
-                    key="tab1_gemini_lang"
-                )
-            else:
-                st.info(f"Model: **Whisper {whisper_model}**\n\nSupports auto-detection for English, Chinese, Thai, and 90+ languages.")
-
-        if step1_uploader:
-            btn_text = "🎙️ Transcribe & Dub to Khmer SRT with Gemini" if ("Gemini" in trans_engine_tab1 and "Khmer" in tab1_target_lang) else "🎙️ Transcribe Media File to SRT"
-            if st.button(btn_text, type="primary", use_container_width=True):
-                tgt = USER_DIR / f"input_{int(time.time())}{Path(step1_uploader.name).suffix}"
-                tgt.write_bytes(step1_uploader.getbuffer())
-                st.session_state.media_path = tgt
-
-                bar = st.progress(0)
-                status_t = st.empty()
-                use_gemini = "Gemini" in trans_engine_tab1
-                is_direct_khmer = use_gemini and "Khmer" in tab1_target_lang
-
-                if "ខ្មែរ" in tab1_spoken_choice or "Khmer" in tab1_spoken_choice:
-                    chosen_spoken = "khmer"
-                elif "ចិន" in tab1_spoken_choice or "Chinese" in tab1_spoken_choice:
-                    chosen_spoken = "chinese"
-                elif "អង់គ្លេស" in tab1_spoken_choice or "English" in tab1_spoken_choice:
-                    chosen_spoken = "english"
-                else:
-                    chosen_spoken = "auto"
-
-                spinner_msg = "Extracting audio and capturing verbatim speech with Gemini AI..." if use_gemini else "Extracting audio and transcribing speech with Whisper..."
-                with st.spinner(spinner_msg):
-                    try:
-                        subs = run_transcription(
-                            file_path=tgt,
-                            engine="gemini" if use_gemini else "whisper",
-                            whisper_model=whisper_model,
-                            api_key=input_key or current_key,
-                            p_bar=bar,
-                            p_status=status_t,
-                            target_lang="khmer" if is_direct_khmer else "original",
-                            spoken_lang=chosen_spoken,
-                        )
-                        st.session_state.subtitles_orig = subs
-                        st.session_state.srt_text_orig = export_subtitles_to_srt(subs)
-                        if is_direct_khmer:
-                            subs_assigned = assign_character_voices_to_subtitles(subs, st.session_state.voice_mode, tgt)
-                            st.session_state.subtitles_khmer = subs_assigned
-                            st.session_state.srt_text_khmer = export_subtitles_to_srt(subs_assigned)
-                            st.session_state.current_step = 3
-                            st.success(f"✓ Transcribed & Translated {len(subs)} lines directly into Khmer with Gemini AI!")
-                        else:
-                            st.session_state.current_step = 2
-                            st.success(f"✓ Transcribed {len(subs)} lines successfully with {'Gemini AI' if use_gemini else 'Whisper'}!")
-                    except Exception as ex:
-                        st.error(f"Transcription error: {ex}")
-
-    with tab1_s:
-        st.markdown("#### 📄 Upload or Paste SRT to Make New Voice-Over")
-        st.caption("ប្រសិនបើអ្នកមានឯកសារ SRT រួចហើយ អ្នកអាច Upload ឬ Paste នៅទីនេះដើម្បីធ្វើ Voice-Over ថ្មីបានភ្លាមៗ ដោយមិនបាច់មាន Video ឡើយ។")
-        
-        c_srt_up1, c_srt_up2 = st.columns([3, 2])
-        with c_srt_up1:
-            direct_srt_file = st.file_uploader(
-                "Upload Existing .SRT Subtitle File",
-                type=["srt"],
-                key=f"direct_srt_input_{st.session_state.get('uploader_key', 0)}",
-            )
-            if direct_srt_file:
-                raw_srt_text = direct_srt_file.getvalue().decode("utf-8", errors="ignore")
-                if raw_srt_text.strip():
-                    st.session_state.srt_text_orig = raw_srt_text
-                    st.session_state.subtitles_orig = parse_srt(raw_srt_text)
-                    st.success(f"✓ Loaded {len(st.session_state.subtitles_orig)} lines from {direct_srt_file.name}")
-        with c_srt_up2:
-            st.markdown(
-                """
-                <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 12px; padding: 14px;">
-                    <div style="font-weight: 700; color: #818cf8; margin-bottom: 4px;">💡 ងាយស្រួល & លឿនជាងមុន</div>
-                    <div style="font-size: 0.85rem; color: #cbd5e1;">
-                        បញ្ចូល SRT ផ្ទាល់ មិនបាច់រង់ចាំ Transcribe វីដេអូឡើយ។ អ្នកអាចបកប្រែជាភាសាខ្មែរ (Step 2) ឬបើជាភាសាខ្មែរស្រាប់ អាចបង្កើតសំឡេង (Step 3) ភ្លាមៗ!
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    if st.session_state.srt_text_orig:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(f"#### 📜 Active SRT Subtitles ({len(st.session_state.subtitles_orig)} Lines)")
-        edited_orig = st.text_area("Edit or View SRT Content", value=st.session_state.srt_text_orig, height=220)
-        if edited_orig != st.session_state.srt_text_orig:
-            st.session_state.srt_text_orig = edited_orig
-            st.session_state.subtitles_orig = parse_srt(edited_orig)
-
-        c_d1, c_d2, c_d3 = st.columns([1, 1, 1])
-        with c_d1:
-            st.download_button(
-                "⬇️ Download Current SRT",
-                data=st.session_state.srt_text_orig,
-                file_name="subtitles.srt",
-                mime="text/plain",
-                use_container_width=True,
-            )
-        with c_d2:
-            if st.button("🌐 Translate to Khmer (Step 2) ➔", use_container_width=True):
-                st.session_state.current_step = 2
-                st.rerun()
-        with c_d3:
-            if st.button("🎙️ Make Voice-Over Directly (Step 3) ➔", type="primary", use_container_width=True):
-                kh_subs = assign_character_voices_to_subtitles(
-                    st.session_state.subtitles_orig,
-                    st.session_state.voice_mode,
-                    st.session_state.media_path,
-                )
-                st.session_state.subtitles_khmer = kh_subs
-                st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
-                st.session_state.current_step = 3
-                st.rerun()
-
-
-# ---------------------------------------------------------------------
-# TAB 2: TRANSLATE SRT -> KHMER
-# ---------------------------------------------------------------------
-with tab2:
-    st.markdown("### 2️⃣ Translate SRT to Natural Khmer (ភាសាខ្មែរ)")
-    st.caption("Translates subtitle dialogue into natural, fluent Khmer speech while preserving line alignment.")
-
-    c_t2_up1, c_t2_up2 = st.columns([3, 2])
-    with c_t2_up1:
-        tab2_file = st.file_uploader(
-            "Or Upload SRT File to Translate",
-            type=["srt"],
-            key=f"tab2_file_{st.session_state.get('uploader_key', 0)}",
-        )
-        if tab2_file:
-            t2_srt = tab2_file.getvalue().decode("utf-8", errors="ignore")
-            if t2_srt.strip():
-                st.session_state.srt_text_orig = t2_srt
-                st.session_state.subtitles_orig = parse_srt(t2_srt)
-
-    with c_t2_up2:
-        if st.session_state.srt_text_orig:
-            is_kh_already = bool(re.search(r"[\u1780-\u17FF]", st.session_state.srt_text_orig))
-            if is_kh_already:
-                st.success("✓ អត្ថបទ SRT នេះមានអក្សរខ្មែរស្រាប់ហើយ!")
-                if st.button("⚡ Skip Translation ➔ Make Voice-Over (Step 3)", type="primary", use_container_width=True):
-                    kh_subs = assign_character_voices_to_subtitles(
-                        st.session_state.subtitles_orig,
-                        st.session_state.voice_mode,
-                        st.session_state.media_path,
-                    )
-                    st.session_state.subtitles_khmer = kh_subs
-                    st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
-                    st.session_state.current_step = 3
-                    st.rerun()
-
-    source_srt_input = st.text_area(
-        "Source SRT Subtitles to Translate",
-        value=st.session_state.srt_text_orig,
-        height=180,
-        placeholder="Paste your SRT here or transcribe in Step 1...",
+with c_au2:
+    auto_bgm_file = st.file_uploader(
+        "Optional Background Music (BGM)",
+        type=["mp3", "wav"],
+        key=f"auto_pipe_bgm_{st.session_state.get('uploader_key', 0)}",
     )
-
-    c_tbtn1, c_tbtn2 = st.columns([2, 1])
-    with c_tbtn1:
-        if st.button("🇰🇭 Translate Subtitles to Natural Khmer", type="primary", use_container_width=True):
-            if not source_srt_input.strip():
-                st.warning("Please provide or transcribe SRT subtitles first.")
-            elif not (input_key or current_key):
-                st.error("Please provide a Gemini API Key in the sidebar.")
-            else:
-                parsed = parse_srt(source_srt_input)
-                st.session_state.subtitles_orig = parsed
-                bar2 = st.progress(0)
-                status2 = st.empty()
-                with st.spinner("Translating to natural Khmer with Gemini AI..."):
-                    try:
-                        khmer_subs = translate_subtitles_khmer(parsed, input_key or current_key, bar2, status2)
-                        khmer_subs = assign_character_voices_to_subtitles(
-                            khmer_subs,
-                            st.session_state.voice_mode,
-                            st.session_state.media_path,
-                        )
-                        st.session_state.subtitles_khmer = khmer_subs
-                        st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
-                        st.session_state.current_step = 3
-                        st.success(f"✓ Translated {len(khmer_subs)} lines into Khmer!")
-                    except Exception as ex:
-                        st.error(f"Translation failed: {ex}")
-    with c_tbtn2:
-        if st.button("⚡ Use as Khmer directly", use_container_width=True):
-            if source_srt_input.strip():
-                parsed = parse_srt(source_srt_input)
-                khmer_subs = assign_character_voices_to_subtitles(
-                    parsed,
-                    st.session_state.voice_mode,
-                    st.session_state.media_path,
-                )
-                st.session_state.subtitles_khmer = khmer_subs
-                st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
-                st.session_state.current_step = 3
-                st.rerun()
-
-    if st.session_state.srt_text_khmer:
-        st.markdown("#### 🇰🇭 Khmer SRT Subtitles (ភាសាខ្មែរ)")
-        edited_khmer = st.text_area("Khmer SRT Subtitle Editor", value=st.session_state.srt_text_khmer, height=220)
-        if edited_khmer != st.session_state.srt_text_khmer:
-            st.session_state.srt_text_khmer = edited_khmer
-            st.session_state.subtitles_khmer = parse_srt(edited_khmer)
-
-        c_dk1, c_dk2 = st.columns(2)
-        with c_dk1:
-            st.download_button(
-                "⬇️ Download Khmer SRT",
-                data=st.session_state.srt_text_khmer,
-                file_name="khmer_translation.srt",
-                mime="text/plain",
-                use_container_width=True,
-            )
-        with c_dk2:
-            if st.button("Proceed to Step 3: ឆ្លាស់ប្រុសស្រី TTS ➔", type="primary", use_container_width=True):
-                st.session_state.current_step = 3
-                st.rerun()
-
-
-# ---------------------------------------------------------------------
-# TAB 3: ឆ្លាស់ប្រុសស្រី VOICE-OVER TTS (AUTO-RETRY ACTIVE)
-# ---------------------------------------------------------------------
-with tab3:
-    st.markdown("### 3️⃣ ឆ្លាស់ប្រុសស្រី Voice-Over TTS (Auto-Retry Active)")
-    st.caption("សំឡេងនិយាយនឹងឆ្លាស់គ្នារវាងតួប្រុស (Piseth 👨) និងតួស្រី (Sreymom 👩) តាមជួរនីមួយៗ យ៉ាងរលូន។")
-
-    kh_subs = st.session_state.subtitles_khmer
-    if not kh_subs and st.session_state.srt_text_khmer:
-        kh_subs = parse_srt(st.session_state.srt_text_khmer)
-        kh_subs = assign_character_voices_to_subtitles(kh_subs, st.session_state.voice_mode, st.session_state.media_path)
-        st.session_state.subtitles_khmer = kh_subs
-    elif not kh_subs and st.session_state.subtitles_orig:
-        # Fallback to Step 1 subtitles directly if user wants to dub them
-        kh_subs = assign_character_voices_to_subtitles(st.session_state.subtitles_orig, st.session_state.voice_mode, st.session_state.media_path)
-        st.session_state.subtitles_khmer = kh_subs
-        st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
-
-    if not kh_subs:
-        st.info("💡 មិនទាន់មានអត្ថបទ Subtitle ឡើយ។ អ្នកអាច Upload ឯកសារ SRT ខ្មែរនៅទីនេះផ្ទាល់ ដើម្បីបង្កើតសំឡេង Voice-Over ភ្លាមៗ៖")
-        direct_t3_file = st.file_uploader(
-            "Upload Khmer .SRT File directly for Voice-Over",
-            type=["srt"],
-            key=f"tab3_direct_srt_{st.session_state.get('uploader_key', 0)}",
-        )
-        if direct_t3_file:
-            t3_raw = direct_t3_file.getvalue().decode("utf-8", errors="ignore")
-            if t3_raw.strip():
-                parsed = parse_srt(t3_raw)
-                kh_subs = assign_character_voices_to_subtitles(parsed, st.session_state.voice_mode, None)
-                st.session_state.subtitles_khmer = kh_subs
-                st.session_state.srt_text_khmer = t3_raw
-                st.success(f"✓ Loaded {len(kh_subs)} lines from {direct_t3_file.name}")
-                st.rerun()
-
-    c_vinfo1, c_vinfo2 = st.columns([3, 2])
-    with c_vinfo1:
-        st.write(f"Subtitle Lines to Voice: **{len(kh_subs)}**")
-        st.write(f"Voice Mode: **{st.session_state.voice_mode.upper()}** | Speed: **{st.session_state.selected_speed}**")
-        
-        # Quick re-alternate & voice detect buttons
-        c_alt1, c_alt2 = st.columns(2)
-        with c_alt1:
-            if st.button("🔄 ចាប់ផ្តើម 👨 ប្រុសមុន", use_container_width=True):
-                st.session_state.voice_mode = "alternate_mf"
-                kh_subs = assign_character_voices_to_subtitles(kh_subs, "alternate_mf", st.session_state.media_path)
-                st.session_state.subtitles_khmer = kh_subs
-                st.rerun()
-        with c_alt2:
-            if st.button("🔄 ចាប់ផ្តើម 👩 ស្រីមុន", use_container_width=True):
-                st.session_state.voice_mode = "alternate_fm"
-                kh_subs = assign_character_voices_to_subtitles(kh_subs, "alternate_fm", st.session_state.media_path)
-                st.session_state.subtitles_khmer = kh_subs
-                st.rerun()
-
-        if st.button("🔍 ពិនិត្យចាប់សំឡេងតួអង្គតាមជួរនីមួយៗ (Detect Voice on All Lines)", use_container_width=True):
-            with st.spinner("Analyzing acoustic pitch for all lines..."):
-                kh_subs = assign_character_voices_to_subtitles(kh_subs, "auto", st.session_state.media_path)
-                st.session_state.subtitles_khmer = kh_subs
-                st.success("✓ បានពិនិត្យចាប់សំឡេងតួអង្គតាមជួរទាំងអស់រួចរាល់!")
-                st.rerun()
-
-    with c_vinfo2:
-        st.markdown(
-            """
-            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 10px; padding: 12px;">
-                <span style="color: #34d399; font-weight: 700;">🛡️ Infinite Auto-Retry Active</span><br>
-                <span style="font-size: 0.85rem; color: #cbd5e1;">មិនបារម្ភរឿងខកខាន ឬដាច់សំឡេងឡើយ។ ប្រព័ន្ធព្យាយាមបង្កើតសំឡេងឡើងវិញដោយស្វ័យប្រវត្តិ។</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    if kh_subs:
-        if st.button("🎙️ Generate All Alternating Voice-Over Lines", type="primary", use_container_width=True):
-            bar3 = st.progress(0)
-            status3 = st.empty()
-            with st.spinner("Synthesizing alternating male/female speech with auto-retry..."):
-                clips = generate_all_tts(
-                    kh_subs,
-                    "km-KH-PisethNeural",
-                    st.session_state.selected_speed,
-                    st.session_state.selected_pitch,
-                    bar3,
-                    status3,
-                )
-                st.session_state.voiceover_clips = clips
-                
-                # Recalculate timeline after voiceover (រាប់ timeline ឡើងវិញតាមសំឡេងនិយាយជាក់ស្តែង)
-                kh_subs = recalculate_timeline_after_voiceover(kh_subs, clips, st.session_state.breathing_pause_ms)
-                st.session_state.subtitles_khmer = kh_subs
-                st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
-
-                st.session_state.current_step = 4
-                st.success(f"✓ Generated {len(clips)} alternating voice lines & synced timeline successfully!")
-
-        if st.session_state.voiceover_clips:
-            st.markdown(
-                """
-                <div style="background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; border-radius: 8px; padding: 10px 14px; margin-top: 10px;">
-                    <span style="color: #60a5fa; font-weight: 700;">⏱️ Timeline Synced with Voice-Over</span><br>
-                    <span style="font-size: 0.85rem; color: #cbd5e1;">ពេលវេលា (Timestamp) នៃជួរនីមួយៗត្រូវបានរាប់ឡើងវិញតាមសំឡេងនិយាយជាក់ស្តែង ដោយធានាថាមិននិយាយជាន់គ្នា។</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.download_button(
-                "⬇️ Download Synced Voiced SRT (ពេលវេលាត្រូវនឹងសំឡេង)",
-                data=st.session_state.srt_text_khmer,
-                file_name="synced_voiceover.srt",
-                mime="text/plain",
-                use_container_width=True,
-            )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("#### 🎧 តារាងសំឡេងតួអង្គឆ្លាស់គ្នា (Line Breakdown)")
-        
-        # Display preview list with character badges and toggle
-        for s in kh_subs[:45]:
-            is_male = "piseth" in s.assigned_voice.lower()
-            b_class = "badge-male" if is_male else "badge-female"
-            g_icon = "👨 Piseth (ប្រុស)" if is_male else "👩 Sreymom (ស្រី)"
-            card_class = "male-card" if is_male else "female-card"
-            pitch_str = f"{s.pitch_f0:.0f} Hz" if hasattr(s, "pitch_f0") and s.pitch_f0 else ("125 Hz" if is_male else "210 Hz")
-
-            st.markdown(
-                f"""
-                <div class="dialogue-card {card_class}">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="font-weight: 800; font-size: 0.95rem; color: #f8fafc;">#{s.index}</span>
-                            <span class='gender-badge {b_class}'>{g_icon}</span>
-                            <span style="font-size: 0.75rem; color: #94a3b8; font-weight: 500;">Pitch: {pitch_str}</span>
-                        </div>
-                        <div style="font-size: 0.78rem; color: #94a3b8; font-weight: 600;">
-                            ⏱️ {s.start_time.split(',')[0]} ➔ {s.end_time.split(',')[0]} ({s.duration_ms/1000:.1f}s)
-                        </div>
-                    </div>
-                    <div class='khmer-font' style='margin-bottom: 6px;'>{s.text}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            col_ctrl1, col_ctrl2 = st.columns([1, 2])
-            with col_ctrl1:
-                new_voice = "km-KH-SreymomNeural" if is_male else "km-KH-PisethNeural"
-                new_gender = "Female" if is_male else "Male"
-                toggle_lbl = "🔄 ប្តូរទៅ 👩 Sreymom" if is_male else "🔄 ប្តូរទៅ 👨 Piseth"
-                if st.button(toggle_lbl, key=f"tgl_{s.index}", use_container_width=True):
-                    s.assigned_voice = new_voice
-                    s.detected_gender = new_gender
-                    vtag = "sreymom" if is_male else "piseth"
-                    out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
-                    generate_tts_clip_with_resilience(s.text, new_voice, st.session_state.selected_speed, "+0Hz", out_p)
-                    st.session_state.voiceover_clips[s.index] = str(out_p)
-                    st.rerun()
-            with col_ctrl2:
-                clip_path = st.session_state.voiceover_clips.get(s.index)
-                if clip_path and Path(clip_path).exists():
-                    st.audio(str(clip_path))
-                else:
-                    if st.button(f"⚡ Retry Voice #{s.index}", key=f"btn_re_{s.index}", use_container_width=True):
-                        vtag = "piseth" if "piseth" in s.assigned_voice.lower() else "sreymom"
-                        out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
-                        ok = generate_tts_clip_with_resilience(
-                            s.text,
-                            s.assigned_voice,
-                            st.session_state.selected_speed,
-                            st.session_state.selected_pitch,
-                            out_p,
-                        )
-                        if ok:
-                            st.session_state.voiceover_clips[s.index] = str(out_p)
-                            st.rerun()
-                        else:
-                            st.error("Retry failed.")
-
-        if st.session_state.voiceover_clips:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Proceed to Step 4: Render Master MP3 ➔", type="primary", use_container_width=True):
-                st.session_state.current_step = 4
-                st.rerun()
-    else:
-        st.info("Translate your subtitles in Step 2 to generate character voice-over.")
-
-
-# ---------------------------------------------------------------------
-# TAB 4: RENDER MASTER MP3 (ANTI-OVERLAP ACTIVE)
-# ---------------------------------------------------------------------
-with tab4:
-    st.markdown("### 4️⃣ Render Master MP3 Audio (កុំឱ្យនិយាយជាន់គ្នា)")
-    st.caption("ផ្គុំសំឡេងតួអង្គទាំងអស់ចូលគ្នា ដោយធានាថាមិនមានការនិយាយជាន់គ្នាដាច់ខាត (No-Collision Sequencing)។")
-
     st.markdown(
         f"""
         <div class="anti-overlap-banner">
-            <h4 style="margin: 0 0 4px 0; color: #34d399;">🛡️ ប្រព័ន្ធការពារការនិយាយជាន់គ្នា (Anti-Overlap Collision Prevention)</h4>
-            <p style="margin: 0; font-size: 0.88rem; color: #e2e8f0;">
-                ប្រសិនបើតួអង្គមុននិយាយមិនទាន់ចប់ នោះតួអង្គបន្ទាប់នឹងរង់ចាំរហូតដល់តួអង្គមុននិយាយចប់សព្វគ្រប់ បូកបន្ថែមចន្លោះដកដង្ហើមធម្មជាតិ <b>{st.session_state.breathing_pause_ms}ms</b> ទើបចាប់ផ្តើមនិយាយ!
-            </p>
+            <span style="color:#34d399; font-weight:700;">🛡️ Anti-Overlap System Active</span><br>
+            <span style="font-size:0.85rem; color:#d1d5db;">តួអង្គនឹងមិននិយាយជាន់គ្នាដាច់ខាត។ ចន្លោះដកដង្ហើម: <b>{st.session_state.breathing_pause_ms}ms</b></span>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    c_rend1, c_rend2 = st.columns([3, 2])
-    with c_rend1:
-        st.write(f"Voiced Dialogue Segments: **{len(st.session_state.voiceover_clips)}**")
-        step4_bgm = st.file_uploader(
-            "Optional Background Music (BGM)",
-            type=["mp3", "wav"],
-            key=f"step4_bgm_file_{st.session_state.get('uploader_key', 0)}",
-        )
-        bgm_duck_vol = st.slider("BGM Ducking Level (dB)", min_value=-30.0, max_value=-6.0, value=-18.0, step=1.0)
-    with c_rend2:
-        st.write(f"Active Pause Gap: **{st.session_state.breathing_pause_ms} ms**")
-        st.caption("អ្នកអាចកែសម្រួលចន្លោះពេលដកដង្ហើម (Pause Gap) នៅលើ Sidebar ខាងឆ្វេង។")
+if auto_file:
+    is_srt_input = auto_file.name.lower().endswith(".srt")
+    btn_label = "🚀 Run 1-Click Voice-Over from SRT" if is_srt_input else "🚀 Run 1-Click Dubbing Pipeline Now"
+    if st.button(btn_label, type="primary", use_container_width=True):
+        saved = USER_DIR / f"auto_in_{int(time.time())}{Path(auto_file.name).suffix}"
+        saved.write_bytes(auto_file.getbuffer())
+        st.session_state.media_path = saved
 
-    if st.button("🎵 Render Final Master MP3 Now", type="primary", use_container_width=True):
-        if not st.session_state.voiceover_clips:
-            st.error("No voice-over clips available. Please run Step 3 first.")
-        else:
-            bgm_obj = None
-            if step4_bgm:
-                bgm_obj = USER_DIR / f"bgm_{int(time.time())}.mp3"
-                bgm_obj.write_bytes(step4_bgm.getbuffer())
+        bgm_p = None
+        if auto_bgm_file:
+            bgm_p = USER_DIR / f"bgm_{int(time.time())}.mp3"
+            bgm_p.write_bytes(auto_bgm_file.getbuffer())
 
-            bar4 = st.progress(0)
-            status4 = st.empty()
-            with st.spinner("Rendering MP3 with Anti-Overlap Protection..."):
-                try:
-                    mp3_res = render_dubbed_mp3(
-                        st.session_state.subtitles_khmer,
-                        st.session_state.voiceover_clips,
-                        st.session_state.video_duration_ms,
-                        bgm_obj,
-                        bgm_duck_vol,
-                        st.session_state.breathing_pause_ms,
-                        bar4,
-                        status4,
-                    )
-                    st.session_state.master_mp3_path = str(mp3_res)
-                    st.success("✓ Master MP3 Rendered Successfully with Zero Voice Overlap!")
-                except Exception as ex:
-                    st.error(f"Render failed: {ex}")
+        status_box = st.status("🎬 Running Full Pipeline...", expanded=True)
+        p_bar = st.progress(5)
 
-    if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
-        final_mp3 = Path(st.session_state.master_mp3_path)
-        mp3_bytes = final_mp3.read_bytes()
-        zip_bytes = create_master_zip_bundle(final_mp3, st.session_state.srt_text_khmer)
+        try:
+            chosen_engine = "gemini" if "Gemini" in transcribe_engine else "whisper"
+            result = run_unified_dubbing_process(
+                media_file=saved,
+                bgm_file=bgm_p,
+                api_key=input_key or current_key,
+                transcribe_engine=chosen_engine,
+                whisper_model=whisper_model,
+                spoken_lang=chosen_global_lang,
+                voice_mode=st.session_state.voice_mode,
+                voice_speed=st.session_state.selected_speed,
+                voice_pitch=st.session_state.selected_pitch,
+                breathing_pause_ms=st.session_state.breathing_pause_ms,
+                progress_bar=p_bar,
+                status_box=status_box,
+            )
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div class="studio-card" style="border: 1px solid rgba(52, 211, 153, 0.45); background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%);">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <div style="font-size: 2rem;">🎧</div>
-                        <div>
-                            <h3 style="margin: 0; color: #34d399; font-family: 'Outfit', 'Kantumruy Pro', sans-serif; font-weight: 800; font-size: 1.3rem;">
-                                Master Dubbed MP3 Studio Release
-                            </h3>
-                            <span style="font-size: 0.85rem; color: #cbd5e1;">ឆ្លាស់ប្រុសស្រី • គ្មានការនិយាយជាន់គ្នា (Zero-Collision) • Synced Timeline</span>
-                        </div>
-                    </div>
-                    <div class="soundwave-box">
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
-                        <div class="soundwave-bar"></div>
+            st.session_state.subtitles_orig = result["subtitles_orig"]
+            st.session_state.srt_text_orig = result["srt_text_orig"]
+            st.session_state.subtitles_khmer = result["subtitles_khmer"]
+            st.session_state.srt_text_khmer = result["srt_text_khmer"]
+            st.session_state.voiceover_clips = result["clips"]
+            st.session_state.master_mp3_path = result["master_mp3_path"]
+            st.session_state.current_step = 4
+            status_box.update(label="🎉 Full Pipeline Complete (All-In-One Unified Function Finished)!", state="complete")
+            st.balloons()
+        except Exception as e:
+            status_box.update(label=f"❌ Error: {e}", state="error")
+            st.error(f"Pipeline stopped: {e}")
+
+if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
+    mp3_obj = Path(st.session_state.master_mp3_path)
+    mp3_bytes = mp3_obj.read_bytes()
+    zip_bytes = create_master_zip_bundle(mp3_obj, st.session_state.srt_text_khmer)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="studio-card" style="border: 1px solid rgba(52, 211, 153, 0.45); background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%);">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="font-size: 2rem;">🎧</div>
+                    <div>
+                        <h3 style="margin: 0; color: #34d399; font-family: 'Outfit', 'Kantumruy Pro', sans-serif; font-weight: 800; font-size: 1.3rem;">
+                            Master Dubbed MP3 Studio Release
+                        </h3>
+                        <span style="font-size: 0.85rem; color: #cbd5e1;">ឆ្លាស់ប្រុសស្រី • គ្មានការនិយាយជាន់គ្នា (Zero-Collision) • Synced Timeline</span>
                     </div>
                 </div>
+                <div class="soundwave-box">
+                    <div class="soundwave-bar"></div>
+                    <div class="soundwave-bar"></div>
+                    <div class="soundwave-bar"></div>
+                    <div class="soundwave-bar"></div>
+                    <div class="soundwave-bar"></div>
+                </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.audio(mp3_bytes, format="audio/mp3")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.checkbox(
+        "🧹 Auto-clear cache after downloading MP3 to make a new MP3 immediately (សម្អាត cache ស្វ័យប្រវត្តពេល download ចប់)",
+        value=st.session_state.get("auto_clear_after_download", True),
+        key="chk_auto_clear_tab0",
+        on_change=lambda: st.session_state.update(auto_clear_after_download=st.session_state.chk_auto_clear_tab0),
+    )
+
+    c_pipe_d1, c_pipe_d2, c_pipe_d3 = st.columns([2, 2, 2])
+    with c_pipe_d1:
+        st.download_button(
+            label="⬇️ Download Master MP3",
+            data=mp3_bytes,
+            file_name=f"dubbed_khmer_{mp3_obj.name}",
+            mime="audio/mp3",
+            type="primary",
+            key="btn_dl_mp3_tab0",
+            on_click=on_master_download,
+            use_container_width=True,
         )
-        st.audio(mp3_bytes, format="audio/mp3")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.checkbox(
-            "🧹 Auto-clear cache after downloading MP3 to make a new MP3 immediately (សម្អាត cache ស្វ័យប្រវត្តពេល download ចប់)",
-            value=st.session_state.get("auto_clear_after_download", True),
-            key="chk_auto_clear_tab4",
-            on_change=lambda: st.session_state.update(auto_clear_after_download=st.session_state.chk_auto_clear_tab4),
+    with c_pipe_d2:
+        st.download_button(
+            label="📦 Download Bundle (MP3 + SRT .ZIP)",
+            data=zip_bytes,
+            file_name="dubbed_khmer_master_bundle.zip",
+            mime="application/zip",
+            key="btn_dl_zip_tab0",
+            on_click=on_master_download,
+            use_container_width=True,
+        )
+    with c_pipe_d3:
+        st.download_button(
+            label="📄 Download Synced SRT",
+            data=st.session_state.srt_text_khmer,
+            file_name="synced_voiceover.srt",
+            mime="text/plain",
+            key="btn_dl_srt_tab0",
+            use_container_width=True,
         )
 
-        c_dl1, c_dl2, c_dl3 = st.columns([2, 2, 2])
-        with c_dl1:
-            st.download_button(
-                label="⬇️ Download Final Master MP3",
-                data=mp3_bytes,
-                file_name="dubbed_khmer_master.mp3",
-                mime="audio/mp3",
-                type="primary",
-                key="btn_dl_mp3_tab4",
-                on_click=on_master_download,
-                use_container_width=True,
-            )
-        with c_dl2:
-            st.download_button(
-                label="📦 Download Bundle (MP3 + SRT .ZIP)",
-                data=zip_bytes,
-                file_name="dubbed_khmer_master_bundle.zip",
-                mime="application/zip",
-                key="btn_dl_zip_tab4",
-                on_click=on_master_download,
-                use_container_width=True,
-            )
-        with c_dl3:
-            st.download_button(
-                label="📄 Download Synced SRT",
-                data=st.session_state.srt_text_khmer,
-                file_name="synced_master_timing.srt",
-                mime="text/plain",
-                key="btn_dl_srt_tab4",
-                use_container_width=True,
-            )
+    st.markdown("<br>", unsafe_allow_html=True)
+    c_pipe_c1, c_pipe_c2 = st.columns([3, 1])
+    with c_pipe_c1:
+        st.info("💡 ក្រោយពេលទាញយក Master MP3 ឬ Zip Bundle រួចរាល់ ប្រព័ន្ធនឹងសម្អាត cache ដោយស្វ័យប្រវត្តដើម្បីធ្វើ MP3 ថ្មី។ អ្នកក៏អាចចុចប៊ូតុង Clear Cache ដោយផ្ទាល់បានដែរ។")
+    with c_pipe_c2:
+        if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab0", type="primary", use_container_width=True):
+            clear_user_cache(preserve_success_message=True)
+            st.rerun()
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        c_done1, c_done2 = st.columns([3, 1])
-        with c_done1:
-            st.info("💡 ក្រោយពេលទាញយក Master MP3 ឬ Zip Bundle រួចរាល់ ប្រព័ន្ធនឹងសម្អាត cache ដោយស្វ័យប្រវត្តដើម្បីធ្វើ MP3 ថ្មី។ អ្នកក៏អាចចុចប៊ូតុង Clear Cache ដោយផ្ទាល់បានដែរ។")
-        with c_done2:
-            if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab4", type="primary", use_container_width=True):
-                clear_user_cache(preserve_success_message=True)
-                st.rerun()
