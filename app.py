@@ -1568,9 +1568,10 @@ with tab_auto:
     c_au1, c_au2 = st.columns([3, 2])
     with c_au1:
         auto_file = st.file_uploader(
-            "Select Video or Audio File",
-            type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
+            "Select Video, Audio, or SRT File",
+            type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a", "srt"],
             key=f"auto_pipe_file_{st.session_state.get('uploader_key', 0)}",
+            help="Upload a video to transcribe & dub, OR upload an SRT file to generate voice-over directly!",
         )
     with c_au2:
         auto_bgm_file = st.file_uploader(
@@ -1589,7 +1590,9 @@ with tab_auto:
         )
 
     if auto_file:
-        if st.button("🚀 Run 1-Click Dubbing Pipeline Now", type="primary", use_container_width=True):
+        is_srt_input = auto_file.name.lower().endswith(".srt")
+        btn_label = "🚀 Run 1-Click Voice-Over from SRT" if is_srt_input else "🚀 Run 1-Click Dubbing Pipeline Now"
+        if st.button(btn_label, type="primary", use_container_width=True):
             saved = USER_DIR / f"auto_in_{int(time.time())}{Path(auto_file.name).suffix}"
             saved.write_bytes(auto_file.getbuffer())
             st.session_state.media_path = saved
@@ -1603,23 +1606,43 @@ with tab_auto:
             p_bar = st.progress(5)
 
             try:
-                # Step 1
-                status_box.write("📌 **Step 1/4**: Transcribing audio with Whisper AI...")
-                subs1 = run_transcription(saved, whisper_model, p_bar)
-                st.session_state.subtitles_orig = subs1
-                st.session_state.srt_text_orig = export_subtitles_to_srt(subs1)
-                status_box.write(f"✓ Step 1 Complete: {len(subs1)} lines transcribed.")
+                if is_srt_input:
+                    # Direct SRT workflow: No video transcription needed!
+                    status_box.write("📄 **Loading SRT Subtitles**: Parsing subtitle file directly...")
+                    raw_srt = auto_file.getvalue().decode("utf-8", errors="ignore")
+                    subs1 = parse_srt(raw_srt)
+                    st.session_state.subtitles_orig = subs1
+                    st.session_state.srt_text_orig = raw_srt
+                    status_box.write(f"✓ Loaded {len(subs1)} subtitle lines from SRT.")
 
-                # Step 2
-                status_box.write("🇰🇭 **Step 2/4**: Translating to natural Khmer dialogue...")
-                subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
-                
-                # Assign Character Alternation (ឆ្លាស់ប្រុសស្រី)
-                status_box.write("🎭 **Character Alternation**: Assigning alternating Male 👨 and Female 👩 voices...")
-                subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, saved)
-                st.session_state.subtitles_khmer = subs2
-                st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
-                status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated and character-assigned.")
+                    # Check if already Khmer
+                    has_khmer = bool(re.search(r"[\u1780-\u17FF]", raw_srt))
+                    if has_khmer:
+                        status_box.write("🇰🇭 **Khmer Detected**: Subtitles are already in Khmer! Direct to Voice-Over...")
+                        subs2 = assign_character_voices_to_subtitles(subs1, st.session_state.voice_mode, None)
+                    else:
+                        status_box.write("🇰🇭 **Translating to Khmer**: Translating subtitle lines with Gemini AI...")
+                        subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
+                        subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, None)
+
+                    st.session_state.subtitles_khmer = subs2
+                    st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
+                else:
+                    # Standard Video/Audio workflow:
+                    # Step 1: Transcribe video
+                    status_box.write("📌 **Step 1/4**: Transcribing original video audio with Whisper AI...")
+                    subs1 = run_transcription(saved, whisper_model, p_bar)
+                    st.session_state.subtitles_orig = subs1
+                    st.session_state.srt_text_orig = export_subtitles_to_srt(subs1)
+                    status_box.write(f"✓ Step 1 Complete: {len(subs1)} lines transcribed.")
+
+                    # Step 2: Translate to Khmer & Assign Characters
+                    status_box.write("🇰🇭 **Step 2/4**: Translating to natural Khmer dialogue...")
+                    subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
+                    subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, saved)
+                    st.session_state.subtitles_khmer = subs2
+                    st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
+                    status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated and character-assigned.")
 
                 # Step 3
                 status_box.write("🎙️ **Step 3/4**: Synthesizing neural speech (infinite auto-retry active)...")
@@ -1742,60 +1765,109 @@ with tab_auto:
 
 
 # ---------------------------------------------------------------------
-# TAB 1: TRANSCRIBE VIDEO -> SRT
+# ---------------------------------------------------------------------
+# TAB 1: TRANSCRIBE VIDEO -> SRT / MAKE NEW FROM SRT
 # ---------------------------------------------------------------------
 with tab1:
-    st.markdown("### 1️⃣ Transcribe Video to SRT")
-    st.caption("Upload your video/audio file to automatically extract speech and generate standard SRT subtitles.")
+    st.markdown("### 1️⃣ Transcribe Video to SRT / Make Voice-Over from SRT")
+    st.caption("អ្នកអាចជ្រើសរើស Transcribe ពី Video ទៅជា Subtitle SRT ឬ បញ្ចូលឯកសារ SRT ផ្ទាល់ ដើម្បីបង្កើត Voice-Over ថ្មី។")
 
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        step1_uploader = st.file_uploader(
-            "Upload Video or Audio",
-            type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
-            key=f"step1_file_{st.session_state.get('uploader_key', 0)}",
-        )
-    with c2:
-        st.markdown("**Transcription Settings**")
-        st.info(f"Model: **Whisper {whisper_model}**\n\nSupports auto-detection for English, Chinese, Thai, and 90+ languages.")
+    tab1_v, tab1_s = st.tabs([
+        "🎬 Transcribe Speech from Video",
+        "📄 Make New Voice-Over from SRT File",
+    ])
 
-    if step1_uploader:
-        if st.button("🎙️ Transcribe Media File to SRT", type="primary", use_container_width=True):
-            tgt = USER_DIR / f"input_{int(time.time())}{Path(step1_uploader.name).suffix}"
-            tgt.write_bytes(step1_uploader.getbuffer())
-            st.session_state.media_path = tgt
+    with tab1_v:
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            step1_uploader = st.file_uploader(
+                "Upload Video or Audio to Extract Subtitles",
+                type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
+                key=f"step1_file_{st.session_state.get('uploader_key', 0)}",
+            )
+        with c2:
+            st.markdown("**Transcription Settings**")
+            st.info(f"Model: **Whisper {whisper_model}**\n\nSupports auto-detection for English, Chinese, Thai, and 90+ languages.")
 
-            bar = st.progress(0)
-            status_t = st.empty()
-            with st.spinner("Extracting audio and transcribing speech..."):
-                try:
-                    subs = run_transcription(tgt, whisper_model, bar, status_t)
-                    st.session_state.subtitles_orig = subs
-                    st.session_state.srt_text_orig = export_subtitles_to_srt(subs)
-                    st.session_state.current_step = 2
-                    st.success(f"✓ Transcribed {len(subs)} lines successfully!")
-                except Exception as ex:
-                    st.error(f"Transcription error: {ex}")
+        if step1_uploader:
+            if st.button("🎙️ Transcribe Media File to SRT", type="primary", use_container_width=True):
+                tgt = USER_DIR / f"input_{int(time.time())}{Path(step1_uploader.name).suffix}"
+                tgt.write_bytes(step1_uploader.getbuffer())
+                st.session_state.media_path = tgt
+
+                bar = st.progress(0)
+                status_t = st.empty()
+                with st.spinner("Extracting audio and transcribing speech with Whisper..."):
+                    try:
+                        subs = run_transcription(tgt, whisper_model, bar, status_t)
+                        st.session_state.subtitles_orig = subs
+                        st.session_state.srt_text_orig = export_subtitles_to_srt(subs)
+                        st.session_state.current_step = 2
+                        st.success(f"✓ Transcribed {len(subs)} lines successfully!")
+                    except Exception as ex:
+                        st.error(f"Transcription error: {ex}")
+
+    with tab1_s:
+        st.markdown("#### 📄 Upload or Paste SRT to Make New Voice-Over")
+        st.caption("ប្រសិនបើអ្នកមានឯកសារ SRT រួចហើយ អ្នកអាច Upload ឬ Paste នៅទីនេះដើម្បីធ្វើ Voice-Over ថ្មីបានភ្លាមៗ ដោយមិនបាច់មាន Video ឡើយ។")
+        
+        c_srt_up1, c_srt_up2 = st.columns([3, 2])
+        with c_srt_up1:
+            direct_srt_file = st.file_uploader(
+                "Upload Existing .SRT Subtitle File",
+                type=["srt"],
+                key=f"direct_srt_input_{st.session_state.get('uploader_key', 0)}",
+            )
+            if direct_srt_file:
+                raw_srt_text = direct_srt_file.getvalue().decode("utf-8", errors="ignore")
+                if raw_srt_text.strip():
+                    st.session_state.srt_text_orig = raw_srt_text
+                    st.session_state.subtitles_orig = parse_srt(raw_srt_text)
+                    st.success(f"✓ Loaded {len(st.session_state.subtitles_orig)} lines from {direct_srt_file.name}")
+        with c_srt_up2:
+            st.markdown(
+                """
+                <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 12px; padding: 14px;">
+                    <div style="font-weight: 700; color: #818cf8; margin-bottom: 4px;">💡 ងាយស្រួល & លឿនជាងមុន</div>
+                    <div style="font-size: 0.85rem; color: #cbd5e1;">
+                        បញ្ចូល SRT ផ្ទាល់ មិនបាច់រង់ចាំ Transcribe វីដេអូឡើយ។ អ្នកអាចបកប្រែជាភាសាខ្មែរ (Step 2) ឬបើជាភាសាខ្មែរស្រាប់ អាចបង្កើតសំឡេង (Step 3) ភ្លាមៗ!
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     if st.session_state.srt_text_orig:
-        st.markdown("#### 📜 Transcribed SRT Subtitles")
-        edited_orig = st.text_area("Edit or View Original SRT", value=st.session_state.srt_text_orig, height=240)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"#### 📜 Active SRT Subtitles ({len(st.session_state.subtitles_orig)} Lines)")
+        edited_orig = st.text_area("Edit or View SRT Content", value=st.session_state.srt_text_orig, height=220)
         if edited_orig != st.session_state.srt_text_orig:
             st.session_state.srt_text_orig = edited_orig
             st.session_state.subtitles_orig = parse_srt(edited_orig)
 
-        c_d1, c_d2 = st.columns(2)
+        c_d1, c_d2, c_d3 = st.columns([1, 1, 1])
         with c_d1:
             st.download_button(
-                "⬇️ Download Original SRT",
+                "⬇️ Download Current SRT",
                 data=st.session_state.srt_text_orig,
-                file_name="original_transcription.srt",
+                file_name="subtitles.srt",
                 mime="text/plain",
                 use_container_width=True,
             )
         with c_d2:
-            if st.button("Proceed to Step 2: Translate to Khmer ➔", use_container_width=True):
+            if st.button("🌐 Translate to Khmer (Step 2) ➔", use_container_width=True):
                 st.session_state.current_step = 2
+                st.rerun()
+        with c_d3:
+            if st.button("🎙️ Make Voice-Over Directly (Step 3) ➔", type="primary", use_container_width=True):
+                kh_subs = assign_character_voices_to_subtitles(
+                    st.session_state.subtitles_orig,
+                    st.session_state.voice_mode,
+                    st.session_state.media_path,
+                )
+                st.session_state.subtitles_khmer = kh_subs
+                st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
+                st.session_state.current_step = 3
                 st.rerun()
 
 
@@ -1806,42 +1878,85 @@ with tab2:
     st.markdown("### 2️⃣ Translate SRT to Natural Khmer (ភាសាខ្មែរ)")
     st.caption("Translates subtitle dialogue into natural, fluent Khmer speech while preserving line alignment.")
 
+    c_t2_up1, c_t2_up2 = st.columns([3, 2])
+    with c_t2_up1:
+        tab2_file = st.file_uploader(
+            "Or Upload SRT File to Translate",
+            type=["srt"],
+            key=f"tab2_file_{st.session_state.get('uploader_key', 0)}",
+        )
+        if tab2_file:
+            t2_srt = tab2_file.getvalue().decode("utf-8", errors="ignore")
+            if t2_srt.strip():
+                st.session_state.srt_text_orig = t2_srt
+                st.session_state.subtitles_orig = parse_srt(t2_srt)
+
+    with c_t2_up2:
+        if st.session_state.srt_text_orig:
+            is_kh_already = bool(re.search(r"[\u1780-\u17FF]", st.session_state.srt_text_orig))
+            if is_kh_already:
+                st.success("✓ អត្ថបទ SRT នេះមានអក្សរខ្មែរស្រាប់ហើយ!")
+                if st.button("⚡ Skip Translation ➔ Make Voice-Over (Step 3)", type="primary", use_container_width=True):
+                    kh_subs = assign_character_voices_to_subtitles(
+                        st.session_state.subtitles_orig,
+                        st.session_state.voice_mode,
+                        st.session_state.media_path,
+                    )
+                    st.session_state.subtitles_khmer = kh_subs
+                    st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
+                    st.session_state.current_step = 3
+                    st.rerun()
+
     source_srt_input = st.text_area(
-        "Source SRT Subtitles",
+        "Source SRT Subtitles to Translate",
         value=st.session_state.srt_text_orig,
         height=180,
         placeholder="Paste your SRT here or transcribe in Step 1...",
     )
 
-    if st.button("🇰🇭 Translate Subtitles to Khmer", type="primary", use_container_width=True):
-        if not source_srt_input.strip():
-            st.warning("Please provide or transcribe SRT subtitles first.")
-        elif not (input_key or current_key):
-            st.error("Please provide a Gemini API Key in the sidebar.")
-        else:
-            parsed = parse_srt(source_srt_input)
-            st.session_state.subtitles_orig = parsed
-            bar2 = st.progress(0)
-            status2 = st.empty()
-            with st.spinner("Translating to natural Khmer with Gemini..."):
-                try:
-                    khmer_subs = translate_subtitles_khmer(parsed, input_key or current_key, bar2, status2)
-                    # Run character voice assignment (ឆ្លាស់ប្រុសស្រី)
-                    khmer_subs = assign_character_voices_to_subtitles(
-                        khmer_subs,
-                        st.session_state.voice_mode,
-                        st.session_state.media_path,
-                    )
-                    st.session_state.subtitles_khmer = khmer_subs
-                    st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
-                    st.session_state.current_step = 3
-                    st.success(f"✓ Translated {len(khmer_subs)} lines into Khmer!")
-                except Exception as ex:
-                    st.error(f"Translation failed: {ex}")
+    c_tbtn1, c_tbtn2 = st.columns([2, 1])
+    with c_tbtn1:
+        if st.button("🇰🇭 Translate Subtitles to Natural Khmer", type="primary", use_container_width=True):
+            if not source_srt_input.strip():
+                st.warning("Please provide or transcribe SRT subtitles first.")
+            elif not (input_key or current_key):
+                st.error("Please provide a Gemini API Key in the sidebar.")
+            else:
+                parsed = parse_srt(source_srt_input)
+                st.session_state.subtitles_orig = parsed
+                bar2 = st.progress(0)
+                status2 = st.empty()
+                with st.spinner("Translating to natural Khmer with Gemini AI..."):
+                    try:
+                        khmer_subs = translate_subtitles_khmer(parsed, input_key or current_key, bar2, status2)
+                        khmer_subs = assign_character_voices_to_subtitles(
+                            khmer_subs,
+                            st.session_state.voice_mode,
+                            st.session_state.media_path,
+                        )
+                        st.session_state.subtitles_khmer = khmer_subs
+                        st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
+                        st.session_state.current_step = 3
+                        st.success(f"✓ Translated {len(khmer_subs)} lines into Khmer!")
+                    except Exception as ex:
+                        st.error(f"Translation failed: {ex}")
+    with c_tbtn2:
+        if st.button("⚡ Use as Khmer directly", use_container_width=True):
+            if source_srt_input.strip():
+                parsed = parse_srt(source_srt_input)
+                khmer_subs = assign_character_voices_to_subtitles(
+                    parsed,
+                    st.session_state.voice_mode,
+                    st.session_state.media_path,
+                )
+                st.session_state.subtitles_khmer = khmer_subs
+                st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
+                st.session_state.current_step = 3
+                st.rerun()
 
     if st.session_state.srt_text_khmer:
         st.markdown("#### 🇰🇭 Khmer SRT Subtitles (ភាសាខ្មែរ)")
-        edited_khmer = st.text_area("Khmer SRT Subtitle Editor", value=st.session_state.srt_text_khmer, height=240)
+        edited_khmer = st.text_area("Khmer SRT Subtitle Editor", value=st.session_state.srt_text_khmer, height=220)
         if edited_khmer != st.session_state.srt_text_khmer:
             st.session_state.srt_text_khmer = edited_khmer
             st.session_state.subtitles_khmer = parse_srt(edited_khmer)
@@ -1856,7 +1971,7 @@ with tab2:
                 use_container_width=True,
             )
         with c_dk2:
-            if st.button("Proceed to Step 3: ឆ្លាស់ប្រុសស្រី TTS ➔", use_container_width=True):
+            if st.button("Proceed to Step 3: ឆ្លាស់ប្រុសស្រី TTS ➔", type="primary", use_container_width=True):
                 st.session_state.current_step = 3
                 st.rerun()
 
@@ -1873,6 +1988,28 @@ with tab3:
         kh_subs = parse_srt(st.session_state.srt_text_khmer)
         kh_subs = assign_character_voices_to_subtitles(kh_subs, st.session_state.voice_mode, st.session_state.media_path)
         st.session_state.subtitles_khmer = kh_subs
+    elif not kh_subs and st.session_state.subtitles_orig:
+        # Fallback to Step 1 subtitles directly if user wants to dub them
+        kh_subs = assign_character_voices_to_subtitles(st.session_state.subtitles_orig, st.session_state.voice_mode, st.session_state.media_path)
+        st.session_state.subtitles_khmer = kh_subs
+        st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
+
+    if not kh_subs:
+        st.info("💡 មិនទាន់មានអត្ថបទ Subtitle ឡើយ។ អ្នកអាច Upload ឯកសារ SRT ខ្មែរនៅទីនេះផ្ទាល់ ដើម្បីបង្កើតសំឡេង Voice-Over ភ្លាមៗ៖")
+        direct_t3_file = st.file_uploader(
+            "Upload Khmer .SRT File directly for Voice-Over",
+            type=["srt"],
+            key=f"tab3_direct_srt_{st.session_state.get('uploader_key', 0)}",
+        )
+        if direct_t3_file:
+            t3_raw = direct_t3_file.getvalue().decode("utf-8", errors="ignore")
+            if t3_raw.strip():
+                parsed = parse_srt(t3_raw)
+                kh_subs = assign_character_voices_to_subtitles(parsed, st.session_state.voice_mode, None)
+                st.session_state.subtitles_khmer = kh_subs
+                st.session_state.srt_text_khmer = t3_raw
+                st.success(f"✓ Loaded {len(kh_subs)} lines from {direct_t3_file.name}")
+                st.rerun()
 
     c_vinfo1, c_vinfo2 = st.columns([3, 2])
     with c_vinfo1:
