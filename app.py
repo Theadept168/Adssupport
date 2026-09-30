@@ -763,6 +763,53 @@ def generate_all_tts(subtitles: list[Subtitle], default_voice: str, rate: str, p
     return audio_map
 
 
+def recalculate_timeline_after_voiceover(
+    subtitles: list[Subtitle],
+    audio_map: dict[int, str],
+    min_pause_ms: int = 200,
+) -> list[Subtitle]:
+    """Recalculates every subtitle timestamp to match the actual voiced audio speech duration
+    and anti-overlap placement. Subtitles become 100% synchronized with the master MP3 audio.
+    """
+    if not subtitles or not audio_map:
+        return subtitles
+
+    last_speech_end = 0
+    updated_subs = []
+
+    for s in subtitles:
+        clip_str = audio_map.get(s.index)
+        clip_dur = s.duration_ms
+        if clip_str and Path(clip_str).exists():
+            try:
+                clip = AudioSegment.from_file(clip_str)
+                clip_dur = len(clip)
+            except Exception:
+                pass
+
+        target_start = s.start_ms
+        if target_start < last_speech_end + min_pause_ms:
+            target_start = last_speech_end + min_pause_ms
+
+        target_end = target_start + clip_dur
+        last_speech_end = target_end
+
+        updated_subs.append(
+            Subtitle(
+                index=s.index,
+                start_time=format_ms_to_timestamp(target_start),
+                end_time=format_ms_to_timestamp(target_end),
+                text=s.text,
+                start_ms=target_start,
+                end_ms=target_end,
+                detected_gender=s.detected_gender,
+                assigned_voice=s.assigned_voice,
+                pitch_f0=s.pitch_f0,
+            )
+        )
+    return updated_subs
+
+
 # 4. Render Master MP3 Audio with Anti-Collision / Anti-Overlapping Protection (កុំឱ្យតួអង្គនិយាយជាន់គ្នា)
 def render_dubbed_mp3(
     subtitles: list[Subtitle],
@@ -1073,6 +1120,12 @@ with tab_auto:
                 st.session_state.voiceover_clips = clips
                 status_box.write(f"✓ Step 3 Complete: {len(clips)} lines synthesized.")
 
+                # Recalculate timeline after voiceover (រាប់ timeline ឡើងវិញតាមសំឡេងនិយាយជាក់ស្តែង)
+                status_box.write("⏱️ **Timeline Recalculation**: Re-counting and aligning subtitle timestamps to exact voice-over duration...")
+                subs2 = recalculate_timeline_after_voiceover(subs2, clips, st.session_state.breathing_pause_ms)
+                st.session_state.subtitles_khmer = subs2
+                st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
+
                 # Step 4: Render MP3 with Anti-Overlap
                 status_box.write("🎧 **Step 4/4**: Rendering master MP3 (preventing any voice overlap)...")
                 final_out = render_dubbed_mp3(
@@ -1086,7 +1139,7 @@ with tab_auto:
                 )
                 st.session_state.master_mp3_path = str(final_out)
                 st.session_state.current_step = 4
-                status_box.update(label="🎉 Full Pipeline Complete (No-Overlap Verified)!", state="complete")
+                status_box.update(label="🎉 Full Pipeline Complete (Timeline Synced & No Overlap)!", state="complete")
                 st.balloons()
             except Exception as e:
                 status_box.update(label=f"❌ Error: {e}", state="error")
@@ -1104,14 +1157,25 @@ with tab_auto:
             unsafe_allow_html=True,
         )
         st.audio(str(mp3_obj))
-        st.download_button(
-            label="⬇️ Download Dubbed MP3 File",
-            data=mp3_obj.read_bytes(),
-            file_name=f"dubbed_khmer_{mp3_obj.name}",
-            mime="audio/mp3",
-            type="primary",
-            use_container_width=True,
-        )
+        
+        c_pipe_d1, c_pipe_d2 = st.columns([1, 1])
+        with c_pipe_d1:
+            st.download_button(
+                label="⬇️ Download Dubbed MP3 File",
+                data=mp3_obj.read_bytes(),
+                file_name=f"dubbed_khmer_{mp3_obj.name}",
+                mime="audio/mp3",
+                type="primary",
+                use_container_width=True,
+            )
+        with c_pipe_d2:
+            st.download_button(
+                label="⬇️ Download Synced Voiced SRT (ពេលវេលាត្រូវនឹងសំឡេង)",
+                data=st.session_state.srt_text_khmer,
+                file_name="synced_voiceover.srt",
+                mime="text/plain",
+                use_container_width=True,
+            )
 
 
 # ---------------------------------------------------------------------
@@ -1292,8 +1356,32 @@ with tab3:
                     status3,
                 )
                 st.session_state.voiceover_clips = clips
+                
+                # Recalculate timeline after voiceover (រាប់ timeline ឡើងវិញតាមសំឡេងនិយាយជាក់ស្តែង)
+                kh_subs = recalculate_timeline_after_voiceover(kh_subs, clips, st.session_state.breathing_pause_ms)
+                st.session_state.subtitles_khmer = kh_subs
+                st.session_state.srt_text_khmer = export_subtitles_to_srt(kh_subs)
+
                 st.session_state.current_step = 4
-                st.success(f"✓ Generated {len(clips)} alternating voice lines successfully!")
+                st.success(f"✓ Generated {len(clips)} alternating voice lines & synced timeline successfully!")
+
+        if st.session_state.voiceover_clips:
+            st.markdown(
+                """
+                <div style="background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; border-radius: 8px; padding: 10px 14px; margin-top: 10px;">
+                    <span style="color: #60a5fa; font-weight: 700;">⏱️ Timeline Synced with Voice-Over</span><br>
+                    <span style="font-size: 0.85rem; color: #cbd5e1;">ពេលវេលា (Timestamp) នៃជួរនីមួយៗត្រូវបានរាប់ឡើងវិញតាមសំឡេងនិយាយជាក់ស្តែង ដោយធានាថាមិននិយាយជាន់គ្នា។</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.download_button(
+                "⬇️ Download Synced Voiced SRT (ពេលវេលាត្រូវនឹងសំឡេង)",
+                data=st.session_state.srt_text_khmer,
+                file_name="synced_voiceover.srt",
+                mime="text/plain",
+                use_container_width=True,
+            )
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### 🎧 តារាងសំឡេងតួអង្គឆ្លាស់គ្នា (Line Breakdown)")
@@ -1303,7 +1391,8 @@ with tab3:
             col_id, col_char, col_txt, col_aud = st.columns([1, 2, 5, 3])
             with col_id:
                 st.markdown(f"**#{s.index}**")
-                st.caption(f"{s.start_time}")
+                st.caption(f"{s.start_time} - {s.end_time}")
+                st.caption(f"⏱️ {s.duration_ms/1000:.1f}s")
             with col_char:
                 is_male = "piseth" in s.assigned_voice.lower()
                 b_class = "badge-male" if is_male else "badge-female"
@@ -1424,7 +1513,7 @@ with tab4:
         )
         st.audio(str(final_mp3))
         
-        c_dl1, c_dl2 = st.columns([2, 1])
+        c_dl1, c_dl2, c_dl3 = st.columns([2, 2, 1])
         with c_dl1:
             st.download_button(
                 label="⬇️ Download Final Master MP3",
@@ -1435,4 +1524,12 @@ with tab4:
                 use_container_width=True,
             )
         with c_dl2:
+            st.download_button(
+                label="⬇️ Download Synced SRT (រាប់តាមសំឡេង)",
+                data=st.session_state.srt_text_khmer,
+                file_name="synced_master_timing.srt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with c_dl3:
             st.metric("File Size", f"{final_mp3.stat().st_size / (1024*1024):.2f} MB")
