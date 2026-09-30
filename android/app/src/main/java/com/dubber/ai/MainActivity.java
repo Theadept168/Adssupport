@@ -40,7 +40,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String PREF_NAME = "dubber_prefs";
     private static final String KEY_SERVER_URL = "server_url";
-    private static final String DEFAULT_URL = "https://golf-frankfurt-coastal-monitoring.trycloudflare.com/?device=VGhlYToxMjEyMTI.5580befe1b89338853e31248";
+    private static final String DEFAULT_URL = "https://sage-fans-females-adjust.trycloudflare.com/?device=VGhlYToxMjEyMTI.5580befe1b89338853e31248";
     private static final String GITHUB_CONFIG_URL = "https://raw.githubusercontent.com/Theadept168/Adssupport/main/app_url.json";
     private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
 
