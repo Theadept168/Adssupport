@@ -22,7 +22,6 @@ if sys.platform == "win32":
         _locale._getdefaultlocale = lambda *args: ("en_US", "utf-8")
     except Exception:
         pass
-    # Set WindowsSelectorEventLoopPolicy for robust asyncio without Proactor socket errors
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     except Exception:
@@ -31,6 +30,7 @@ if sys.platform == "win32":
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
+import numpy as np
 import requests
 import streamlit as st
 from pydub import AudioSegment
@@ -86,14 +86,6 @@ st.markdown(
         box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
     }
     
-    /* Stepper Workflow Cards */
-    .step-nav-bar {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 24px;
-        flex-wrap: wrap;
-    }
-    
     .step-pill {
         flex: 1;
         min-width: 170px;
@@ -131,7 +123,6 @@ st.markdown(
     .num-3 { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
     .num-4 { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
 
-    /* Studio Glass Card */
     .studio-card {
         background: rgba(17, 24, 39, 0.75);
         backdrop-filter: blur(16px);
@@ -148,11 +139,31 @@ st.markdown(
         line-height: 1.7;
     }
     
-    /* Modern buttons */
+    .gender-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+    .badge-male {
+        background: rgba(59, 130, 246, 0.2);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .badge-female {
+        background: rgba(236, 72, 153, 0.2);
+        color: #f472b6;
+        border: 1px solid rgba(236, 72, 153, 0.4);
+    }
+    
     .stButton>button {
         border-radius: 10px;
         font-weight: 600;
-        letter-spacing: 0.01em;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         padding: 10px 18px;
     }
@@ -161,7 +172,6 @@ st.markdown(
         box-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
     }
     
-    /* Stat Badge */
     .stat-badge {
         display: inline-flex;
         align-items: center;
@@ -189,6 +199,9 @@ class Subtitle:
     text: str
     start_ms: int = 0
     end_ms: int = 0
+    detected_gender: str = "Male"
+    assigned_voice: str = "km-KH-PisethNeural"
+    pitch_f0: float = 130.0
 
     @property
     def duration_ms(self) -> int:
@@ -261,6 +274,140 @@ def export_subtitles_to_srt(subtitles: list[Subtitle]) -> str:
 
 
 # ==========================================
+# Audio Pitch & Character Gender Detection Engine
+# ==========================================
+def estimate_pitch_f0(samples: np.ndarray, sample_rate: int = 16000) -> float:
+    """Estimates the fundamental frequency (F0) of speech samples using autocorrelation."""
+    if len(samples) == 0:
+        return 140.0
+    frame_len = int(sample_rate * 0.05)   # 50ms frame
+    hop_len = int(sample_rate * 0.025)    # 25ms hop
+    min_lag = int(sample_rate / 380)      # ~380 Hz max human F0
+    max_lag = int(sample_rate / 75)       # ~75 Hz min human F0
+    pitches = []
+
+    mean_energy = float(np.mean(samples**2)) if len(samples) > 0 else 0.0
+    energy_thresh = max(20.0, mean_energy * 0.06)
+
+    max_samples = min(len(samples) - frame_len, sample_rate * 45)
+    if max_samples <= 0:
+        return 140.0
+
+    for i in range(0, max_samples, hop_len):
+        frame = samples[i : i + frame_len]
+        energy = np.mean(frame**2)
+        if energy < energy_thresh:
+            continue
+        frame_norm = frame - np.mean(frame)
+        corr = np.correlate(frame_norm, frame_norm, mode="full")
+        corr = corr[len(frame) - 1 :]
+        if len(corr) > max_lag:
+            peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
+            peak_val = corr[peak_lag]
+            zero_lag = corr[0]
+            if zero_lag > 0 and (peak_val / zero_lag) > 0.20:
+                f0 = sample_rate / peak_lag
+                if 75 <= f0 <= 380:
+                    pitches.append(f0)
+    return float(np.median(pitches)) if pitches else 140.0
+
+
+def detect_character_gender_for_segment(
+    audio_full: Optional[AudioSegment],
+    sub: Subtitle,
+    global_pitch: float = 140.0,
+) -> tuple[str, str, float]:
+    """Detects whether a character speaking in a subtitle line is Male or Female.
+    Returns: (gender: "Male"|"Female", voice: "km-KH-PisethNeural"|"km-KH-SreymomNeural", pitch_f0: float)
+    """
+    # 1. Text cues override
+    t_clean = sub.text.strip().lower()
+    female_cues = ("[ស្រី]", "[តួស្រី]", "[female]", "[woman]", "[girl]", "[sreymom]")
+    male_cues = ("[ប្រុស]", "[តួប្រុស]", "[male]", "[man]", "[boy]", "[piseth]")
+
+    if any(cue in t_clean for cue in female_cues):
+        return "Female", "km-KH-SreymomNeural", 210.0
+    if any(cue in t_clean for cue in male_cues):
+        return "Male", "km-KH-PisethNeural", 125.0
+
+    # 2. Acoustic pitch estimation from original audio clip
+    if audio_full is not None and len(audio_full) > 0:
+        s_ms = max(0, sub.start_ms)
+        e_ms = min(len(audio_full), sub.end_ms)
+        if e_ms > s_ms + 200:
+            try:
+                clip = audio_full[s_ms:e_ms]
+                audio_16k = clip.set_channels(1).set_frame_rate(16000)
+                samples = np.array(audio_16k.get_array_of_samples(), dtype=np.float32)
+                f0 = estimate_pitch_f0(samples, 16000)
+                # Male F0 is typically 85-155Hz, Female F0 is typically 160-280Hz
+                if f0 < 160.0:
+                    return "Male", "km-KH-PisethNeural", round(f0, 1)
+                else:
+                    return "Female", "km-KH-SreymomNeural", round(f0, 1)
+            except Exception:
+                pass
+
+    # 3. Fallback based on global audio pitch
+    if global_pitch < 160.0:
+        return "Male", "km-KH-PisethNeural", global_pitch
+    else:
+        return "Female", "km-KH-SreymomNeural", global_pitch
+
+
+def assign_character_voices_to_subtitles(
+    subtitles: list[Subtitle],
+    mode: str,
+    media_path: Optional[Path] = None,
+) -> list[Subtitle]:
+    """Assigns voice and gender to all subtitles according to selected mode:
+    - "auto": Auto-detect male/female by audio pitch
+    - "male": Male (Piseth) only
+    - "female": Female (Sreymom) only
+    - "alternate": Alternates line by line
+    """
+    if not subtitles:
+        return []
+
+    audio_full = None
+    global_pitch = 140.0
+    if mode == "auto" and media_path and media_path.exists():
+        try:
+            audio_full = AudioSegment.from_file(media_path)
+            sample_clip = audio_full[:60000].set_channels(1).set_frame_rate(16000)
+            samples = np.array(sample_clip.get_array_of_samples(), dtype=np.float32)
+            global_pitch = estimate_pitch_f0(samples, 16000)
+        except Exception:
+            audio_full = None
+
+    for idx, s in enumerate(subtitles):
+        if mode == "male":
+            s.detected_gender = "Male"
+            s.assigned_voice = "km-KH-PisethNeural"
+            s.pitch_f0 = 125.0
+        elif mode == "female":
+            s.detected_gender = "Female"
+            s.assigned_voice = "km-KH-SreymomNeural"
+            s.pitch_f0 = 210.0
+        elif mode == "alternate":
+            if idx % 2 == 0:
+                s.detected_gender = "Male"
+                s.assigned_voice = "km-KH-PisethNeural"
+                s.pitch_f0 = 125.0
+            else:
+                s.detected_gender = "Female"
+                s.assigned_voice = "km-KH-SreymomNeural"
+                s.pitch_f0 = 210.0
+        else:  # "auto"
+            g, v, p = detect_character_gender_for_segment(audio_full, s, global_pitch)
+            s.detected_gender = g
+            s.assigned_voice = v
+            s.pitch_f0 = p
+
+    return subtitles
+
+
+# ==========================================
 # Persistent State & Configuration
 # ==========================================
 def load_config() -> dict:
@@ -303,10 +450,9 @@ def init_session():
         "srt_text_khmer": "",
         "voiceover_clips": {},
         "master_mp3_path": None,
-        "selected_voice": "km-KH-PisethNeural",
+        "voice_mode": "auto",  # auto, male, female, alternate
         "selected_speed": "+0%",
         "selected_pitch": "+0Hz",
-        "auto_pipeline_running": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -501,7 +647,6 @@ def translate_subtitles_khmer(subtitles: list[Subtitle], api_key: str, p_bar=Non
 
         for s in chunk:
             khmer_txt = translated_map.get(s.index, s.text)
-            # Remove any unwanted non-Khmer script bleed (Thai Unicode \u0E00-\u0E7F)
             khmer_txt = re.sub(r"[\u0E00-\u0E7F]+", "", khmer_txt).strip() or s.text
             khmer_list.append(
                 Subtitle(
@@ -511,6 +656,9 @@ def translate_subtitles_khmer(subtitles: list[Subtitle], api_key: str, p_bar=Non
                     text=khmer_txt,
                     start_ms=s.start_ms,
                     end_ms=s.end_ms,
+                    detected_gender=s.detected_gender,
+                    assigned_voice=s.assigned_voice,
+                    pitch_f0=s.pitch_f0,
                 )
             )
 
@@ -524,7 +672,6 @@ def translate_subtitles_khmer(subtitles: list[Subtitle], api_key: str, p_bar=Non
 
 # 3. Robust Voice-Over TTS Synthesis (With Infinite Retry & Isolated Event Loop)
 def synthesize_line_isolated_loop(text: str, voice: str, rate: str, pitch: str, out_file: Path) -> bool:
-    """Safely runs edge-tts inside a clean, isolated event loop on Windows."""
     import edge_tts
 
     async def _async_task():
@@ -546,7 +693,6 @@ def synthesize_line_isolated_loop(text: str, voice: str, rate: str, pitch: str, 
 
 
 def generate_tts_clip_with_resilience(text: str, voice: str, rate: str, pitch: str, out_file: Path, max_retries: int = 5) -> bool:
-    """Robust multi-tier retry mechanism: 'when can't generate voice-over please try do it'."""
     clean = text.strip()
     if not clean:
         return False
@@ -582,7 +728,7 @@ def generate_tts_clip_with_resilience(text: str, voice: str, rate: str, pitch: s
     return False
 
 
-def generate_all_tts(subtitles: list[Subtitle], voice: str, rate: str, pitch: str, p_bar=None, p_status=None) -> dict[int, str]:
+def generate_all_tts(subtitles: list[Subtitle], default_voice: str, rate: str, pitch: str, p_bar=None, p_status=None) -> dict[int, str]:
     tts_dir = USER_DIR / "tts_cache"
     tts_dir.mkdir(exist_ok=True)
     
@@ -591,16 +737,19 @@ def generate_all_tts(subtitles: list[Subtitle], voice: str, rate: str, pitch: st
     failed = []
 
     for idx, s in enumerate(subtitles, start=1):
-        voice_tag = "piseth" if "piseth" in voice.lower() else "sreymom"
+        # Use line-specific assigned character voice, or fallback to default
+        line_voice = s.assigned_voice or default_voice
+        voice_tag = "piseth" if "piseth" in line_voice.lower() else "sreymom"
         clip_p = tts_dir / f"line_{s.index}_{voice_tag}.mp3"
 
         if clip_p.exists() and clip_p.stat().st_size > 500:
             audio_map[s.index] = str(clip_p)
         else:
             if p_status:
-                p_status.text(f"🎙️ Voicing line {idx}/{total}: {s.text[:30]}...")
+                g_icon = "👨" if "piseth" in line_voice.lower() else "👩"
+                p_status.text(f"🎙️ Voicing {g_icon} line {idx}/{total}: {s.text[:30]}...")
             
-            success = generate_tts_clip_with_resilience(s.text, voice, rate, pitch, clip_p)
+            success = generate_tts_clip_with_resilience(s.text, line_voice, rate, pitch, clip_p)
             if success:
                 audio_map[s.index] = str(clip_p)
             else:
@@ -699,16 +848,22 @@ with st.sidebar:
 
     whisper_model = st.selectbox("Whisper STT Accuracy", options=["base", "tiny", "small"], index=0)
 
-    st.markdown("#### 🎙️ Voice Settings")
-    voice_choice = st.selectbox(
-        "Khmer Neural Voice",
-        options=["km-KH-PisethNeural (ប្រុស - Male)", "km-KH-SreymomNeural (ស្រី - Female)"],
-        index=0 if "piseth" in st.session_state.selected_voice.lower() else 1,
+    st.markdown("#### 🎭 Character Voice / Gender Mode")
+    v_mode = st.radio(
+        "Voice Assignment Mode",
+        options=[
+            ("auto", "🤖 Auto Detect Male/Female (Acoustic Pitch)"),
+            ("male", "👨 Male (Piseth - ពិសិដ្ឋ) Only"),
+            ("female", "👩 Female (Sreymom - ស្រីមុំ) Only"),
+            ("alternate", "🔄 Alternate (Male 👨 / Female 👩)"),
+        ],
+        format_func=lambda x: x[1],
+        index=0 if st.session_state.voice_mode == "auto" else (1 if st.session_state.voice_mode == "male" else (2 if st.session_state.voice_mode == "female" else 3)),
     )
-    st.session_state.selected_voice = "km-KH-PisethNeural" if "Piseth" in voice_choice else "km-KH-SreymomNeural"
+    st.session_state.voice_mode = v_mode[0]
 
     st.session_state.selected_speed = st.select_slider(
-        "Voice Speed",
+        "Speech Speed / ល្បឿនសំឡេង",
         options=["-20%", "-10%", "+0%", "+10%", "+20%", "+30%"],
         value=st.session_state.selected_speed,
     )
@@ -744,13 +899,13 @@ st.markdown(
                     🎙️ Dubber AI Pro Studio
                 </h1>
                 <p style="color: #94a3b8; font-size: 0.95rem; margin: 6px 0 0 0;">
-                    Video to SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ Neural Voice-Over $\\rightarrow$ Master MP3
+                    Video $\\rightarrow$ SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ Character Gender Detection $\\rightarrow$ Master MP3
                 </p>
             </div>
             <div style="display: flex; gap: 10px; margin-top: 10px;">
                 <span class="stat-badge">📝 {len(st.session_state.subtitles_orig)} Lines</span>
+                <span class="stat-badge">🎭 Mode: {st.session_state.voice_mode.upper()}</span>
                 <span class="stat-badge">🎙️ {len(st.session_state.voiceover_clips)} Voiced</span>
-                <span class="stat-badge">⏱️ {st.session_state.video_duration_ms // 1000}s</span>
             </div>
         </div>
     </div>
@@ -768,7 +923,7 @@ with c_p2:
     st.markdown(f"<div class='step-pill {act}'><div class='step-num num-2'>2</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 2</div><div style='font-weight:700;'>Translate Khmer</div></div></div>", unsafe_allow_html=True)
 with c_p3:
     act = "active" if st.session_state.current_step == 3 else ("completed" if st.session_state.voiceover_clips else "")
-    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-3'>3</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 3</div><div style='font-weight:700;'>Voice-Over TTS</div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-3'>3</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 3</div><div style='font-weight:700;'>Character TTS</div></div></div>", unsafe_allow_html=True)
 with c_p4:
     act = "active" if st.session_state.current_step == 4 else ("completed" if st.session_state.master_mp3_path else "")
     st.markdown(f"<div class='step-pill {act}'><div class='step-num num-4'>4</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 4</div><div style='font-weight:700;'>Render MP3</div></div></div>", unsafe_allow_html=True)
@@ -780,7 +935,7 @@ tab_auto, tab1, tab2, tab3, tab4 = st.tabs([
     "⚡ 1-Click Auto Pipeline",
     "1️⃣ Transcribe Video $\\rightarrow$ SRT",
     "2️⃣ Translate SRT $\\rightarrow$ Khmer",
-    "3️⃣ Voice-Over TTS (Auto-Retry)",
+    "3️⃣ Character Voice-Over TTS",
     "4️⃣ Render Master MP3",
 ])
 
@@ -791,8 +946,8 @@ with tab_auto:
     st.markdown(
         """
         <div class="studio-card">
-            <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Hands-Free Pipeline</h3>
-            <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will automatically run all 4 steps and render your final Khmer MP3 voice-over.</p>
+            <h3 style="margin-top:0; color:#60a5fa;">⚡ 1-Click Hands-Free Pipeline with Character Gender Detection</h3>
+            <p style="color:#94a3b8;">Upload your video or audio file. Dubber AI will transcribe, translate to Khmer, automatically detect whether each character speaking is Male (Piseth 👨) or Female (Sreymom 👩), and render your final master MP3.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -806,7 +961,7 @@ with tab_auto:
         )
     with c_au2:
         auto_bgm_file = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="auto_pipe_bgm")
-        st.caption(f"Active Voice: **{st.session_state.selected_voice}** | Speed: **{st.session_state.selected_speed}**")
+        st.caption(f"Character Mode: **{st.session_state.voice_mode.upper()}** | Speed: **{st.session_state.selected_speed}**")
 
     if auto_file:
         if st.button("🚀 Run 1-Click Dubbing Pipeline Now", type="primary", use_container_width=True):
@@ -833,15 +988,19 @@ with tab_auto:
                 # Step 2
                 status_box.write("🇰🇭 **Step 2/4**: Translating to natural Khmer dialogue...")
                 subs2 = translate_subtitles_khmer(subs1, input_key or current_key, p_bar)
+                
+                # Assign Character Gender & Voice
+                status_box.write("🎭 **Character Detection**: Analyzing character pitch (Male 👨 / Female 👩)...")
+                subs2 = assign_character_voices_to_subtitles(subs2, st.session_state.voice_mode, saved)
                 st.session_state.subtitles_khmer = subs2
                 st.session_state.srt_text_khmer = export_subtitles_to_srt(subs2)
-                status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated to Khmer.")
+                status_box.write(f"✓ Step 2 Complete: {len(subs2)} lines translated and character-classified.")
 
                 # Step 3
-                status_box.write("🎙️ **Step 3/4**: Synthesizing neural voice-over (infinite retry active)...")
+                status_box.write("🎙️ **Step 3/4**: Synthesizing neural voice-over per character (auto-retry active)...")
                 clips = generate_all_tts(
                     subs2,
-                    st.session_state.selected_voice,
+                    "km-KH-PisethNeural",
                     st.session_state.selected_speed,
                     st.session_state.selected_pitch,
                     p_bar,
@@ -974,6 +1133,12 @@ with tab2:
             with st.spinner("Translating to natural Khmer with Gemini..."):
                 try:
                     khmer_subs = translate_subtitles_khmer(parsed, input_key or current_key, bar2, status2)
+                    # Run character voice assignment
+                    khmer_subs = assign_character_voices_to_subtitles(
+                        khmer_subs,
+                        st.session_state.voice_mode,
+                        st.session_state.media_path,
+                    )
                     st.session_state.subtitles_khmer = khmer_subs
                     st.session_state.srt_text_khmer = export_subtitles_to_srt(khmer_subs)
                     st.session_state.current_step = 3
@@ -998,27 +1163,36 @@ with tab2:
                 use_container_width=True,
             )
         with c_dk2:
-            if st.button("Proceed to Step 3: Voice-Over TTS ➔", use_container_width=True):
+            if st.button("Proceed to Step 3: Character Voice-Over TTS ➔", use_container_width=True):
                 st.session_state.current_step = 3
                 st.rerun()
 
 
 # ---------------------------------------------------------------------
-# TAB 3: VOICE-OVER TTS (AUTO-RETRY ACTIVE)
+# TAB 3: CHARACTER VOICE-OVER TTS (AUTO-RETRY ACTIVE)
 # ---------------------------------------------------------------------
 with tab3:
-    st.markdown("### 3️⃣ Generate Voice-Over TTS (Auto-Retry Active)")
-    st.caption("Synthesizes studio-quality Khmer speech for each subtitle line. An automatic multi-tier retry mechanism ensures no dialogue lines are missed.")
+    st.markdown("### 3️⃣ Character Voice-Over TTS (Auto-Detection Active)")
+    st.caption("Synthesizes studio-quality Khmer speech for each character. Uses acoustic pitch analysis to automatically assign Piseth (Male 👨) or Sreymom (Female 👩).")
 
     kh_subs = st.session_state.subtitles_khmer
     if not kh_subs and st.session_state.srt_text_khmer:
         kh_subs = parse_srt(st.session_state.srt_text_khmer)
+        kh_subs = assign_character_voices_to_subtitles(kh_subs, st.session_state.voice_mode, st.session_state.media_path)
         st.session_state.subtitles_khmer = kh_subs
 
     c_vinfo1, c_vinfo2 = st.columns([3, 2])
     with c_vinfo1:
         st.write(f"Subtitle Lines to Voice: **{len(kh_subs)}**")
-        st.write(f"Voice: **{st.session_state.selected_voice}** | Speed: **{st.session_state.selected_speed}**")
+        st.write(f"Character Mode: **{st.session_state.voice_mode.upper()}** | Speed: **{st.session_state.selected_speed}**")
+        
+        # Option to re-run character gender detection
+        if st.button("🔍 Re-Detect Characters (Male/Female)"):
+            kh_subs = assign_character_voices_to_subtitles(kh_subs, st.session_state.voice_mode, st.session_state.media_path)
+            st.session_state.subtitles_khmer = kh_subs
+            st.success("Re-detected character voices for all lines!")
+            st.rerun()
+
     with c_vinfo2:
         st.markdown(
             """
@@ -1031,13 +1205,13 @@ with tab3:
         )
 
     if kh_subs:
-        if st.button("🎙️ Generate All Voice-Over Lines", type="primary", use_container_width=True):
+        if st.button("🎙️ Generate All Character Voice-Over Lines", type="primary", use_container_width=True):
             bar3 = st.progress(0)
             status3 = st.empty()
-            with st.spinner("Synthesizing voice-over with retry..."):
+            with st.spinner("Synthesizing character speech with auto-retry..."):
                 clips = generate_all_tts(
                     kh_subs,
-                    st.session_state.selected_voice,
+                    "km-KH-PisethNeural",
                     st.session_state.selected_speed,
                     st.session_state.selected_pitch,
                     bar3,
@@ -1048,15 +1222,35 @@ with tab3:
                 st.success(f"✓ Generated {len(clips)} voice lines successfully!")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("#### 🎧 Line Audio Preview & Single-Line Regeneration")
+        st.markdown("#### 🎧 Character Line Breakdown & Audio Previews")
         
-        # Display preview list
-        for s in kh_subs[:40]:
-            col_id, col_time, col_txt, col_aud = st.columns([1, 2, 5, 3])
+        # Display preview list with character badges and override
+        for s in kh_subs[:45]:
+            col_id, col_char, col_txt, col_aud = st.columns([1, 2, 5, 3])
             with col_id:
                 st.markdown(f"**#{s.index}**")
-            with col_time:
                 st.caption(f"{s.start_time}")
+            with col_char:
+                is_male = "piseth" in s.assigned_voice.lower()
+                b_class = "badge-male" if is_male else "badge-female"
+                g_icon = "👨 Piseth" if is_male else "👩 Sreymom"
+                st.markdown(f"<span class='gender-badge {b_class}'>{g_icon}</span>", unsafe_allow_html=True)
+                st.caption(f"Pitch: {s.pitch_f0:.0f}Hz")
+                
+                # Switch character voice button
+                new_voice = "km-KH-SreymomNeural" if is_male else "km-KH-PisethNeural"
+                new_gender = "Female" if is_male else "Male"
+                toggle_lbl = "Change to 👩" if is_male else "Change to 👨"
+                if st.button(toggle_lbl, key=f"tgl_{s.index}"):
+                    s.assigned_voice = new_voice
+                    s.detected_gender = new_gender
+                    # Clear cached audio for this line so it regenerates
+                    vtag = "sreymom" if is_male else "piseth"
+                    out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
+                    generate_tts_clip_with_resilience(s.text, new_voice, st.session_state.selected_speed, "+0Hz", out_p)
+                    st.session_state.voiceover_clips[s.index] = str(out_p)
+                    st.rerun()
+
             with col_txt:
                 st.markdown(f"<span class='khmer-font'>{s.text}</span>", unsafe_allow_html=True)
             with col_aud:
@@ -1065,11 +1259,11 @@ with tab3:
                     st.audio(str(clip_path))
                 else:
                     if st.button(f"Retry #{s.index}", key=f"btn_re_{s.index}"):
-                        vtag = "piseth" if "piseth" in st.session_state.selected_voice.lower() else "sreymom"
+                        vtag = "piseth" if "piseth" in s.assigned_voice.lower() else "sreymom"
                         out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
                         ok = generate_tts_clip_with_resilience(
                             s.text,
-                            st.session_state.selected_voice,
+                            s.assigned_voice,
                             st.session_state.selected_speed,
                             st.session_state.selected_pitch,
                             out_p,
@@ -1086,7 +1280,7 @@ with tab3:
                 st.session_state.current_step = 4
                 st.rerun()
     else:
-        st.info("Translate your subtitles in Step 2 to generate voice-over speech.")
+        st.info("Translate your subtitles in Step 2 to generate character voice-over.")
 
 
 # ---------------------------------------------------------------------
@@ -1106,7 +1300,7 @@ with tab4:
             """
             <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; border-radius: 10px; padding: 12px;">
                 <span style="color: #60a5fa; font-weight: 700;">⏱️ Exact Timestamp Positioning</span><br>
-                <span style="font-size: 0.85rem; color: #cbd5e1;">Each voiced segment is placed on the audio timeline matching its exact start timestamp.</span>
+                <span style="font-size: 0.85rem; color: #cbd5e1;">Each character's voiced segment is placed on the audio timeline matching its exact start timestamp.</span>
             </div>
             """,
             unsafe_allow_html=True,
