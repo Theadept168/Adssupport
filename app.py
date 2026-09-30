@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -525,6 +527,9 @@ def init_session():
         "selected_speed": "+60%",  # 1.60x speed (1.60%)
         "selected_pitch": "+0Hz",
         "breathing_pause_ms": 200,  # 200ms anti-collision breathing gap
+        "uploader_key": 0,
+        "auto_clear_after_download": True,
+        "just_cleared_after_download": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -604,7 +609,7 @@ def get_user_workspace() -> Path:
 USER_DIR = get_user_workspace()
 
 
-def clear_user_cache():
+def clear_user_cache(preserve_success_message: bool = False):
     """Cleans all temporary voice clips, extracted wavs, and cached rendered mp3s for the user."""
     tts_dir = USER_DIR / "tts_cache"
     if tts_dir.exists():
@@ -616,7 +621,7 @@ def clear_user_cache():
 
     # Clear temp audio/video files in USER_DIR
     for f in USER_DIR.glob("*.*"):
-        if f.is_file() and f.suffix.lower() in [".mp3", ".wav", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".srt"]:
+        if f.is_file() and f.suffix.lower() in [".mp3", ".wav", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".srt", ".zip"]:
             try:
                 f.unlink()
             except Exception:
@@ -632,6 +637,27 @@ def clear_user_cache():
     st.session_state.media_path = None
     st.session_state.video_duration_ms = 0
     st.session_state.current_step = 1
+    st.session_state.uploader_key = st.session_state.get("uploader_key", 0) + 1
+    if preserve_success_message:
+        st.session_state.just_cleared_after_download = True
+
+
+def create_master_zip_bundle(mp3_path: Path, srt_text: str) -> bytes:
+    """Creates a downloadable ZIP bundle containing the dubbed master MP3 and synced SRT subtitles."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        if mp3_path and mp3_path.exists():
+            z.write(mp3_path, arcname=mp3_path.name)
+        if srt_text:
+            z.writestr("synced_voiceover.srt", srt_text.encode("utf-8"))
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def on_master_download():
+    """Callback triggered automatically when user downloads the master MP3 or bundle to clear cache."""
+    if st.session_state.get("auto_clear_after_download", True):
+        clear_user_cache(preserve_success_message=True)
 
 # Core Processing Engines
 # ==========================================
@@ -1170,6 +1196,25 @@ with c_p4:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+if st.session_state.get("just_cleared_after_download"):
+    st.markdown(
+        """
+        <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; display: flex; align-items: center; gap: 14px;">
+            <div style="font-size: 2rem;">🎉</div>
+            <div>
+                <div style="font-weight: 700; color: #34d399; font-size: 1.05rem;">
+                    ទាញយក Master MP3 រួចរាល់! Cache & Files ត្រូវបានសម្អាតស្អាត 100%
+                </div>
+                <div style="font-size: 0.88rem; color: #cbd5e1; margin-top: 3px;">
+                    Master MP3 downloaded successfully! All temporary audio clips & previous project data have been wiped clean. You can now start creating a brand new MP3!
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.session_state.just_cleared_after_download = False
+
 # Main Studio Tabs
 tab_auto, tab1, tab2, tab3, tab4 = st.tabs([
     "⚡ 1-Click Auto Pipeline",
@@ -1197,10 +1242,14 @@ with tab_auto:
         auto_file = st.file_uploader(
             "Select Video or Audio File",
             type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
-            key="auto_pipe_file",
+            key=f"auto_pipe_file_{st.session_state.get('uploader_key', 0)}",
         )
     with c_au2:
-        auto_bgm_file = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="auto_pipe_bgm")
+        auto_bgm_file = st.file_uploader(
+            "Optional Background Music (BGM)",
+            type=["mp3", "wav"],
+            key=f"auto_pipe_bgm_{st.session_state.get('uploader_key', 0)}",
+        )
         st.markdown(
             f"""
             <div class="anti-overlap-banner">
@@ -1283,6 +1332,9 @@ with tab_auto:
 
     if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
         mp3_obj = Path(st.session_state.master_mp3_path)
+        mp3_bytes = mp3_obj.read_bytes()
+        zip_bytes = create_master_zip_bundle(mp3_obj, st.session_state.srt_text_khmer)
+
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
             """
@@ -1292,35 +1344,55 @@ with tab_auto:
             """,
             unsafe_allow_html=True,
         )
-        st.audio(str(mp3_obj))
-        
-        c_pipe_d1, c_pipe_d2 = st.columns([1, 1])
+        st.audio(mp3_bytes, format="audio/mp3")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.checkbox(
+            "🧹 Auto-clear cache after downloading MP3 to make a new MP3 immediately (សម្អាត cache ស្វ័យប្រវត្តពេល download ចប់)",
+            value=st.session_state.get("auto_clear_after_download", True),
+            key="chk_auto_clear_tab0",
+            on_change=lambda: st.session_state.update(auto_clear_after_download=st.session_state.chk_auto_clear_tab0),
+        )
+
+        c_pipe_d1, c_pipe_d2, c_pipe_d3 = st.columns([2, 2, 2])
         with c_pipe_d1:
             st.download_button(
-                label="⬇️ Download Dubbed MP3 File",
-                data=mp3_obj.read_bytes(),
+                label="⬇️ Download Master MP3",
+                data=mp3_bytes,
                 file_name=f"dubbed_khmer_{mp3_obj.name}",
                 mime="audio/mp3",
                 type="primary",
+                key="btn_dl_mp3_tab0",
+                on_click=on_master_download,
                 use_container_width=True,
             )
         with c_pipe_d2:
             st.download_button(
-                label="⬇️ Download Synced Voiced SRT (ពេលវេលាត្រូវនឹងសំឡេង)",
+                label="📦 Download Bundle (MP3 + SRT .ZIP)",
+                data=zip_bytes,
+                file_name="dubbed_khmer_master_bundle.zip",
+                mime="application/zip",
+                key="btn_dl_zip_tab0",
+                on_click=on_master_download,
+                use_container_width=True,
+            )
+        with c_pipe_d3:
+            st.download_button(
+                label="📄 Download Synced SRT",
                 data=st.session_state.srt_text_khmer,
                 file_name="synced_voiceover.srt",
                 mime="text/plain",
+                key="btn_dl_srt_tab0",
                 use_container_width=True,
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
         c_pipe_c1, c_pipe_c2 = st.columns([3, 1])
         with c_pipe_c1:
-            st.info("💡 ក្រោយពេលទាញយក MP3 និង SRT រួចរាល់ សូមចុចប៊ូតុង **«Clear Cache & Make New MP3»** ដើម្បីសម្អាតអង្គចងចាំ និងចាប់ផ្តើមធ្វើ MP3 ថ្មី។")
+            st.info("💡 ក្រោយពេលទាញយក Master MP3 ឬ Zip Bundle រួចរាល់ ប្រព័ន្ធនឹងសម្អាត cache ដោយស្វ័យប្រវត្តដើម្បីធ្វើ MP3 ថ្មី។ អ្នកក៏អាចចុចប៊ូតុង Clear Cache ដោយផ្ទាល់បានដែរ។")
         with c_pipe_c2:
             if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab0", type="primary", use_container_width=True):
-                clear_user_cache()
-                st.success("✓ Cache cleared! Ready for new MP3.")
+                clear_user_cache(preserve_success_message=True)
                 st.rerun()
 
 
@@ -1336,7 +1408,7 @@ with tab1:
         step1_uploader = st.file_uploader(
             "Upload Video or Audio",
             type=["mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "m4a"],
-            key="step1_file",
+            key=f"step1_file_{st.session_state.get('uploader_key', 0)}",
         )
     with c2:
         st.markdown("**Transcription Settings**")
@@ -1619,7 +1691,11 @@ with tab4:
     c_rend1, c_rend2 = st.columns([3, 2])
     with c_rend1:
         st.write(f"Voiced Dialogue Segments: **{len(st.session_state.voiceover_clips)}**")
-        step4_bgm = st.file_uploader("Optional Background Music (BGM)", type=["mp3", "wav"], key="step4_bgm_file")
+        step4_bgm = st.file_uploader(
+            "Optional Background Music (BGM)",
+            type=["mp3", "wav"],
+            key=f"step4_bgm_file_{st.session_state.get('uploader_key', 0)}",
+        )
         bgm_duck_vol = st.slider("BGM Ducking Level (dB)", min_value=-30.0, max_value=-6.0, value=-18.0, step=1.0)
     with c_rend2:
         st.write(f"Active Pause Gap: **{st.session_state.breathing_pause_ms} ms**")
@@ -1655,6 +1731,9 @@ with tab4:
 
     if st.session_state.master_mp3_path and Path(st.session_state.master_mp3_path).exists():
         final_mp3 = Path(st.session_state.master_mp3_path)
+        mp3_bytes = final_mp3.read_bytes()
+        zip_bytes = create_master_zip_bundle(final_mp3, st.session_state.srt_text_khmer)
+
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
             """
@@ -1664,35 +1743,53 @@ with tab4:
             """,
             unsafe_allow_html=True,
         )
-        st.audio(str(final_mp3))
-        
-        c_dl1, c_dl2, c_dl3 = st.columns([2, 2, 1])
+        st.audio(mp3_bytes, format="audio/mp3")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.checkbox(
+            "🧹 Auto-clear cache after downloading MP3 to make a new MP3 immediately (សម្អាត cache ស្វ័យប្រវត្តពេល download ចប់)",
+            value=st.session_state.get("auto_clear_after_download", True),
+            key="chk_auto_clear_tab4",
+            on_change=lambda: st.session_state.update(auto_clear_after_download=st.session_state.chk_auto_clear_tab4),
+        )
+
+        c_dl1, c_dl2, c_dl3 = st.columns([2, 2, 2])
         with c_dl1:
             st.download_button(
                 label="⬇️ Download Final Master MP3",
-                data=final_mp3.read_bytes(),
+                data=mp3_bytes,
                 file_name="dubbed_khmer_master.mp3",
                 mime="audio/mp3",
                 type="primary",
+                key="btn_dl_mp3_tab4",
+                on_click=on_master_download,
                 use_container_width=True,
             )
         with c_dl2:
             st.download_button(
-                label="⬇️ Download Synced SRT (រាប់តាមសំឡេង)",
-                data=st.session_state.srt_text_khmer,
-                file_name="synced_master_timing.srt",
-                mime="text/plain",
+                label="📦 Download Bundle (MP3 + SRT .ZIP)",
+                data=zip_bytes,
+                file_name="dubbed_khmer_master_bundle.zip",
+                mime="application/zip",
+                key="btn_dl_zip_tab4",
+                on_click=on_master_download,
                 use_container_width=True,
             )
         with c_dl3:
-            st.metric("File Size", f"{final_mp3.stat().st_size / (1024*1024):.2f} MB")
+            st.download_button(
+                label="📄 Download Synced SRT",
+                data=st.session_state.srt_text_khmer,
+                file_name="synced_master_timing.srt",
+                mime="text/plain",
+                key="btn_dl_srt_tab4",
+                use_container_width=True,
+            )
 
         st.markdown("<br>", unsafe_allow_html=True)
         c_done1, c_done2 = st.columns([3, 1])
         with c_done1:
-            st.info("💡 ក្រោយពេលទាញយក MP3 និង SRT រួចរាល់ សូមចុចប៊ូតុង **«Clear Cache & Make New MP3»** ដើម្បីសម្អាតអង្គចងចាំ និងចាប់ផ្តើមធ្វើ MP3 ថ្មី។")
+            st.info("💡 ក្រោយពេលទាញយក Master MP3 ឬ Zip Bundle រួចរាល់ ប្រព័ន្ធនឹងសម្អាត cache ដោយស្វ័យប្រវត្តដើម្បីធ្វើ MP3 ថ្មី។ អ្នកក៏អាចចុចប៊ូតុង Clear Cache ដោយផ្ទាល់បានដែរ។")
         with c_done2:
             if st.button("🧹 Clear Cache & Make New MP3", key="btn_clear_tab4", type="primary", use_container_width=True):
-                clear_user_cache()
-                st.success("✓ Cache cleared! Ready for new MP3.")
+                clear_user_cache(preserve_success_message=True)
                 st.rerun()
