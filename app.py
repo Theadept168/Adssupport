@@ -64,133 +64,395 @@ if FFMPEG_PATH.exists():
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Kantumruy+Pro:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Kantumruy+Pro:wght@300;400;500;600;700&display=swap');
+    
+    :root {
+        --primary-glow: #6366f1;
+        --accent-glow: #a855f7;
+        --rose-glow: #ec4899;
+        --emerald-glow: #10b981;
+        --cyan-glow: #06b6d4;
+        --bg-surface: rgba(15, 23, 42, 0.75);
+        --bg-card: rgba(17, 24, 39, 0.7);
+        --border-glass: rgba(255, 255, 255, 0.09);
+        --border-highlight: rgba(255, 255, 255, 0.18);
+    }
     
     * {
-        font-family: 'Inter', 'Kantumruy Pro', -apple-system, sans-serif;
+        font-family: 'Plus Jakarta Sans', 'Kantumruy Pro', -apple-system, sans-serif;
     }
     
+    /* Smooth custom scrollbars */
+    ::-webkit-scrollbar {
+        width: 7px;
+        height: 7px;
+    }
+    ::-webkit-scrollbar-track {
+        background: rgba(10, 15, 30, 0.7);
+    }
+    ::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, #6366f1, #a855f7);
+        border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(180deg, #818cf8, #c084fc);
+    }
+
+    /* Base Body Background with Ambient Cyber Glow */
     .stApp {
-        background: radial-gradient(circle at 15% 20%, rgba(30, 58, 138, 0.15), transparent 40%),
-                    radial-gradient(circle at 85% 80%, rgba(88, 28, 135, 0.15), transparent 40%),
-                    #090d16;
-        color: #f1f5f9;
+        background: 
+            radial-gradient(ellipse 90% 50% at 50% -10%, rgba(99, 102, 241, 0.22), transparent 70%),
+            radial-gradient(ellipse 60% 40% at 100% 40%, rgba(217, 70, 239, 0.12), transparent 60%),
+            radial-gradient(ellipse 60% 40% at 0% 70%, rgba(16, 185, 129, 0.10), transparent 60%),
+            radial-gradient(circle at 50% 100%, rgba(30, 58, 138, 0.15), transparent 50%),
+            #070a14 !important;
+        color: #f8fafc;
+        -webkit-font-smoothing: antialiased;
     }
     
-    /* Top Hero Header */
+    /* Top Studio Hero */
     .studio-hero {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 18px;
-        padding: 24px 28px;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.75) 0%, rgba(15, 23, 42, 0.90) 100%);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border: 1px solid var(--border-highlight);
+        border-radius: 22px;
+        padding: 26px 32px;
         margin-bottom: 24px;
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+        box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+        position: relative;
+        overflow: hidden;
     }
-    
-    .step-pill {
-        flex: 1;
-        min-width: 170px;
-        background: rgba(30, 41, 59, 0.6);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 12px;
-        padding: 12px 16px;
+    .studio-hero::after {
+        content: '';
+        position: absolute;
+        top: -60px; right: -60px;
+        width: 280px; height: 280px;
+        background: radial-gradient(circle, rgba(168, 85, 247, 0.25) 0%, transparent 70%);
+        pointer-events: none;
+    }
+
+    .studio-hero-title {
+        font-family: 'Outfit', 'Kantumruy Pro', sans-serif !important;
+        font-size: 2.1rem;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        margin: 0;
+        background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 50%, #93c5fd 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         display: flex;
         align-items: center;
         gap: 12px;
-        transition: all 0.25s ease;
+    }
+    .studio-hero-sub {
+        color: #94a3b8;
+        font-size: 0.98rem;
+        margin: 8px 0 0 0;
+        font-weight: 400;
+        line-height: 1.6;
+    }
+
+    .pulse-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid rgba(16, 185, 129, 0.4);
+        padding: 5px 12px;
+        border-radius: 9999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: #34d399;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .pulse-dot {
+        width: 8px;
+        height: 8px;
+        background: #10b981;
+        border-radius: 50%;
+        box-shadow: 0 0 10px #10b981;
+        animation: pulse-glow 2s infinite;
+    }
+    @keyframes pulse-glow {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.4); opacity: 0.5; }
+    }
+    
+    /* Stepper Navigation Pills */
+    .step-pill {
+        flex: 1;
+        background: rgba(17, 24, 39, 0.7);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid var(--border-glass);
+        border-radius: 16px;
+        padding: 14px 18px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        position: relative;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    .step-pill:hover {
+        transform: translateY(-2px);
+        border-color: rgba(255, 255, 255, 0.2);
     }
     .step-pill.active {
-        background: linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(124, 58, 237, 0.25));
-        border: 1px solid #3b82f6;
-        box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.28), rgba(168, 85, 247, 0.28));
+        border: 1.5px solid #818cf8;
+        box-shadow: 0 8px 30px -4px rgba(99, 102, 241, 0.5), inset 0 0 16px rgba(99, 102, 241, 0.15);
     }
     .step-pill.completed {
-        border-color: rgba(16, 185, 129, 0.5);
+        border-color: rgba(16, 185, 129, 0.6);
+        background: rgba(16, 185, 129, 0.10);
     }
     
     .step-num {
-        width: 30px;
-        height: 30px;
-        border-radius: 8px;
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-weight: 700;
-        font-size: 0.9rem;
+        font-family: 'Outfit', sans-serif;
+        font-weight: 800;
+        font-size: 1rem;
+        flex-shrink: 0;
     }
-    .num-1 { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
-    .num-2 { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid #a855f7; }
-    .num-3 { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
-    .num-4 { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+    .num-1 { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1.5px solid #38bdf8; }
+    .num-2 { background: rgba(192, 132, 252, 0.2); color: #c084fc; border: 1.5px solid #c084fc; }
+    .num-3 { background: rgba(244, 114, 182, 0.2); color: #f472b6; border: 1.5px solid #f472b6; }
+    .num-4 { background: rgba(52, 211, 153, 0.2); color: #34d399; border: 1.5px solid #34d399; }
 
+    /* Studio Glass Cards */
     .studio-card {
-        background: rgba(17, 24, 39, 0.75);
-        backdrop-filter: blur(16px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(17, 24, 39, 0.72);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--border-glass);
+        border-radius: 18px;
+        padding: 24px;
+        margin-bottom: 22px;
+        box-shadow: 0 12px 35px -5px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        transition: all 0.3s ease;
+    }
+    .studio-card:hover {
+        border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    /* Streamlit Tabs Elevated Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: rgba(15, 23, 42, 0.65);
+        padding: 8px;
         border-radius: 16px;
-        padding: 22px;
-        margin-bottom: 20px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        border: 1px solid var(--border-glass);
+        backdrop-filter: blur(16px);
+        margin-bottom: 24px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: auto;
+        padding: 10px 20px;
+        border-radius: 10px;
+        font-family: 'Outfit', 'Kantumruy Pro', sans-serif !important;
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #94a3b8;
+        border: 1px solid transparent;
+        transition: all 0.25s ease;
+        background: transparent;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #f8fafc;
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        color: #ffffff !important;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.85), rgba(168, 85, 247, 0.85)) !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        box-shadow: 0 6px 20px rgba(124, 58, 237, 0.45);
     }
     
+    /* Buttons Glowing Gradient System */
+    .stButton > button {
+        border-radius: 12px;
+        font-family: 'Outfit', 'Kantumruy Pro', sans-serif;
+        font-weight: 700;
+        font-size: 0.95rem;
+        letter-spacing: 0.01em;
+        transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        padding: 12px 22px;
+        border: 1px solid var(--border-glass);
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #d946ef 100%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.25) !important;
+        box-shadow: 0 6px 24px rgba(124, 58, 237, 0.45) !important;
+        color: #ffffff !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 30px rgba(124, 58, 237, 0.65) !important;
+        filter: brightness(1.1);
+    }
+    .stButton > button[kind="secondary"] {
+        background: rgba(30, 41, 59, 0.7) !important;
+        color: #e2e8f0 !important;
+    }
+    .stButton > button[kind="secondary"]:hover {
+        background: rgba(51, 65, 85, 0.9) !important;
+        border-color: rgba(255, 255, 255, 0.25) !important;
+        transform: translateY(-1.5px);
+    }
+
+    /* Download Buttons Customizer */
+    .stDownloadButton > button {
+        border-radius: 12px;
+        font-family: 'Outfit', 'Kantumruy Pro', sans-serif;
+        font-weight: 700;
+        padding: 12px 20px;
+        transition: all 0.25s ease;
+    }
+    .stDownloadButton > button:hover {
+        transform: translateY(-2px);
+    }
+    
+    /* File Uploader Glow */
+    [data-testid="stFileUploader"] {
+        background: rgba(17, 24, 39, 0.6);
+        border: 1.5px dashed rgba(99, 102, 241, 0.4);
+        border-radius: 16px;
+        padding: 18px;
+        transition: all 0.3s ease;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: #818cf8;
+        background: rgba(30, 41, 59, 0.7);
+        box-shadow: 0 0 24px rgba(99, 102, 241, 0.25);
+    }
+
+    /* Anti-Overlap Banner */
+    .anti-overlap-banner {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.25) 100%);
+        border: 1px solid rgba(16, 185, 129, 0.45);
+        border-radius: 14px;
+        padding: 14px 18px;
+        margin-bottom: 18px;
+        box-shadow: 0 8px 20px rgba(16, 185, 129, 0.15);
+    }
+
     .khmer-font {
         font-family: 'Kantumruy Pro', sans-serif !important;
-        font-size: 1.05rem;
-        line-height: 1.7;
+        font-size: 1.08rem;
+        line-height: 1.75;
+        color: #f1f5f9;
     }
     
+    /* Gender Badges */
     .gender-badge {
         display: inline-flex;
         align-items: center;
-        gap: 4px;
-        font-size: 0.78rem;
+        gap: 6px;
+        font-size: 0.82rem;
         font-weight: 700;
-        padding: 4px 10px;
-        border-radius: 6px;
+        padding: 5px 12px;
+        border-radius: 8px;
         letter-spacing: 0.02em;
     }
     .badge-male {
-        background: rgba(59, 130, 246, 0.2);
-        color: #93c5fd;
-        border: 1px solid rgba(59, 130, 246, 0.4);
+        background: rgba(56, 189, 248, 0.18);
+        color: #7dd3fc;
+        border: 1px solid rgba(56, 189, 248, 0.4);
+        box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
     }
     .badge-female {
-        background: rgba(236, 72, 153, 0.2);
-        color: #f472b6;
-        border: 1px solid rgba(236, 72, 153, 0.4);
-    }
-    
-    .anti-overlap-banner {
-        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.25));
-        border: 1px solid rgba(16, 185, 129, 0.4);
-        border-radius: 10px;
-        padding: 12px 16px;
-        margin-bottom: 16px;
+        background: rgba(244, 114, 182, 0.18);
+        color: #f9a8d4;
+        border: 1px solid rgba(244, 114, 182, 0.4);
+        box-shadow: 0 0 12px rgba(244, 114, 182, 0.2);
     }
 
-    .stButton>button {
-        border-radius: 10px;
-        font-weight: 600;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-        padding: 10px 18px;
+    /* Dialogue Card */
+    .dialogue-card {
+        background: rgba(15, 23, 42, 0.65);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 14px;
+        padding: 14px 18px;
+        margin-bottom: 12px;
+        transition: all 0.2s ease;
     }
-    .stButton>button:hover {
-        transform: translateY(-1.5px);
-        box-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
+    .dialogue-card:hover {
+        border-color: rgba(255, 255, 255, 0.18);
+        background: rgba(30, 41, 59, 0.65);
+        transform: translateY(-1px);
+    }
+    .dialogue-card.male-card {
+        border-left: 4px solid #38bdf8;
+    }
+    .dialogue-card.female-card {
+        border-left: 4px solid #f472b6;
     }
     
     .stat-badge {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 6px 12px;
-        border-radius: 8px;
+        padding: 6px 14px;
+        border-radius: 10px;
         font-size: 0.85rem;
         font-weight: 600;
-        background: rgba(30, 41, 59, 0.8);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(30, 41, 59, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Simulated Animated Waveform */
+    .soundwave-box {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        padding: 0 8px;
+    }
+    .soundwave-bar {
+        width: 3.5px;
+        background: linear-gradient(180deg, #38bdf8, #818cf8);
+        border-radius: 4px;
+        animation: soundwave-pulse 1.2s infinite ease-in-out;
+    }
+    .soundwave-bar:nth-child(2) { animation-delay: 0.15s; background: linear-gradient(180deg, #818cf8, #c084fc); }
+    .soundwave-bar:nth-child(3) { animation-delay: 0.3s; background: linear-gradient(180deg, #c084fc, #f472b6); }
+    .soundwave-bar:nth-child(4) { animation-delay: 0.45s; background: linear-gradient(180deg, #f472b6, #34d399); }
+    .soundwave-bar:nth-child(5) { animation-delay: 0.6s; background: linear-gradient(180deg, #34d399, #38bdf8); }
+    @keyframes soundwave-pulse {
+        0%, 100% { height: 6px; }
+        50% { height: 26px; }
+    }
+
+    /* Mobile First Optimizations */
+    @media (max-width: 768px) {
+        .studio-hero {
+            padding: 20px 16px;
+            border-radius: 16px;
+        }
+        .studio-hero-title {
+            font-size: 1.6rem;
+        }
+        .step-pill {
+            min-width: 100%;
+            margin-bottom: 8px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            font-size: 0.85rem;
+            padding: 8px 12px;
+        }
+        .stButton > button {
+            width: 100%;
+        }
     }
     </style>
     """,
@@ -1159,19 +1421,33 @@ with st.sidebar:
 st.markdown(
     f"""
     <div class="studio-hero">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
             <div>
-                <h1 style="font-size: 1.85rem; font-weight: 800; margin: 0; background: linear-gradient(90deg, #60a5fa, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                    <span class="pulse-badge"><span class="pulse-dot"></span> Studio Engine 2026</span>
+                    <span style="font-size: 0.8rem; color: #64748b;">|</span>
+                    <span style="font-size: 0.82rem; color: #94a3b8; font-weight: 500;">High-Precision Khmer AI Dubber</span>
+                </div>
+                <h1 class="studio-hero-title">
                     🎙️ Dubber AI Pro Studio
                 </h1>
-                <p style="color: #94a3b8; font-size: 0.95rem; margin: 6px 0 0 0;">
-                    Video $\\rightarrow$ SRT $\\rightarrow$ Khmer Translation $\\rightarrow$ ឆ្លាស់ប្រុសស្រី (No-Overlap) $\\rightarrow$ Master MP3
+                <p class="studio-hero-sub">
+                    ស្ទូឌីយោបញ្ចូលសំឡេងស្វ័យប្រវត្តិ • ឆ្លាស់ប្រុសស្រី <b>Piseth 👨 & Sreymom 👩</b> • ការពារកុំឱ្យនិយាយជាន់គ្នា <b>(Zero-Collision)</b> • នាំចេញ Master MP3
                 </p>
             </div>
-            <div style="display: flex; gap: 10px; margin-top: 10px;">
-                <span class="stat-badge">📝 {len(st.session_state.subtitles_orig)} Lines</span>
-                <span class="stat-badge">🎭 {st.session_state.voice_mode.upper()}</span>
-                <span class="stat-badge">🛡️ Anti-Overlap: {st.session_state.breathing_pause_ms}ms</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px;">
+                <span class="stat-badge" style="border-color: rgba(56, 189, 248, 0.3); color: #7dd3fc;">
+                    🎬 {len(st.session_state.subtitles_orig)} Segments
+                </span>
+                <span class="stat-badge" style="border-color: rgba(192, 132, 252, 0.3); color: #e9d5ff;">
+                    🎭 {st.session_state.voice_mode.upper()}
+                </span>
+                <span class="stat-badge" style="border-color: rgba(52, 211, 153, 0.3); color: #6ee7b7;">
+                    🛡️ {st.session_state.breathing_pause_ms}ms Pause
+                </span>
+                <span class="stat-badge" style="border-color: rgba(251, 191, 36, 0.3); color: #fde68a;">
+                    ⚡ {st.session_state.selected_speed}
+                </span>
             </div>
         </div>
     </div>
@@ -1183,16 +1459,68 @@ st.markdown(
 c_p1, c_p2, c_p3, c_p4 = st.columns(4)
 with c_p1:
     act = "active" if st.session_state.current_step == 1 else ("completed" if st.session_state.subtitles_orig else "")
-    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-1'>1</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 1</div><div style='font-weight:700;'>Transcribe SRT</div></div></div>", unsafe_allow_html=True)
+    chk = " ✓" if st.session_state.subtitles_orig else ""
+    st.markdown(
+        f"""
+        <div class='step-pill {act}'>
+            <div class='step-num num-1'>1</div>
+            <div style='overflow:hidden;'>
+                <div style='font-size:0.72rem; font-weight:700; color:#38bdf8; letter-spacing:0.04em;'>STEP 01{chk}</div>
+                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Transcribe SRT</div>
+                <div style='font-size:0.75rem; color:#94a3b8;'>Whisper Engine</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 with c_p2:
     act = "active" if st.session_state.current_step == 2 else ("completed" if st.session_state.subtitles_khmer else "")
-    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-2'>2</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 2</div><div style='font-weight:700;'>Translate Khmer</div></div></div>", unsafe_allow_html=True)
+    chk = " ✓" if st.session_state.subtitles_khmer else ""
+    st.markdown(
+        f"""
+        <div class='step-pill {act}'>
+            <div class='step-num num-2'>2</div>
+            <div style='overflow:hidden;'>
+                <div style='font-size:0.72rem; font-weight:700; color:#c084fc; letter-spacing:0.04em;'>STEP 02{chk}</div>
+                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Translate Khmer</div>
+                <div style='font-size:0.75rem; color:#94a3b8;'>Gemini Flash AI</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 with c_p3:
     act = "active" if st.session_state.current_step == 3 else ("completed" if st.session_state.voiceover_clips else "")
-    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-3'>3</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 3</div><div style='font-weight:700;'>ឆ្លាស់ប្រុសស្រី TTS</div></div></div>", unsafe_allow_html=True)
+    chk = " ✓" if st.session_state.voiceover_clips else ""
+    st.markdown(
+        f"""
+        <div class='step-pill {act}'>
+            <div class='step-num num-3'>3</div>
+            <div style='overflow:hidden;'>
+                <div style='font-size:0.72rem; font-weight:700; color:#f472b6; letter-spacing:0.04em;'>STEP 03{chk}</div>
+                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>ឆ្លាស់ប្រុសស្រី TTS</div>
+                <div style='font-size:0.75rem; color:#94a3b8;'>Neural Synthesis</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 with c_p4:
     act = "active" if st.session_state.current_step == 4 else ("completed" if st.session_state.master_mp3_path else "")
-    st.markdown(f"<div class='step-pill {act}'><div class='step-num num-4'>4</div><div><div style='font-size:0.75rem; color:#94a3b8;'>STEP 4</div><div style='font-weight:700;'>Render MP3</div></div></div>", unsafe_allow_html=True)
+    chk = " ✓" if st.session_state.master_mp3_path else ""
+    st.markdown(
+        f"""
+        <div class='step-pill {act}'>
+            <div class='step-num num-4'>4</div>
+            <div style='overflow:hidden;'>
+                <div style='font-size:0.72rem; font-weight:700; color:#34d399; letter-spacing:0.04em;'>STEP 04{chk}</div>
+                <div style='font-weight:700; font-size:0.92rem; color:#f8fafc; white-space:nowrap;'>Master MP3</div>
+                <div style='font-size:0.75rem; color:#94a3b8;'>Zero-Collision</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1338,8 +1666,25 @@ with tab_auto:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
             """
-            <div class="studio-card" style="border-color: rgba(16, 185, 129, 0.4);">
-                <h3 style="margin-top:0; color:#34d399;">🎧 Master Dubbed MP3 Ready! (ឆ្លាស់ប្រុសស្រី • មិនជាន់គ្នា)</h3>
+            <div class="studio-card" style="border: 1px solid rgba(52, 211, 153, 0.45); background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%);">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="font-size: 2rem;">🎧</div>
+                        <div>
+                            <h3 style="margin: 0; color: #34d399; font-family: 'Outfit', 'Kantumruy Pro', sans-serif; font-weight: 800; font-size: 1.3rem;">
+                                Master Dubbed MP3 Studio Release
+                            </h3>
+                            <span style="font-size: 0.85rem; color: #cbd5e1;">ឆ្លាស់ប្រុសស្រី • គ្មានការនិយាយជាន់គ្នា (Zero-Collision) • Synced Timeline</span>
+                        </div>
+                    </div>
+                    <div class="soundwave-box">
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                    </div>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1613,22 +1958,36 @@ with tab3:
         
         # Display preview list with character badges and toggle
         for s in kh_subs[:45]:
-            col_id, col_char, col_txt, col_aud = st.columns([1, 2, 5, 3])
-            with col_id:
-                st.markdown(f"**#{s.index}**")
-                st.caption(f"{s.start_time} - {s.end_time}")
-                st.caption(f"⏱️ {s.duration_ms/1000:.1f}s")
-            with col_char:
-                is_male = "piseth" in s.assigned_voice.lower()
-                b_class = "badge-male" if is_male else "badge-female"
-                g_icon = "👨 Piseth (ប្រុស)" if is_male else "👩 Sreymom (ស្រី)"
-                st.markdown(f"<span class='gender-badge {b_class}'>{g_icon}</span>", unsafe_allow_html=True)
-                
-                # Switch character voice button
+            is_male = "piseth" in s.assigned_voice.lower()
+            b_class = "badge-male" if is_male else "badge-female"
+            g_icon = "👨 Piseth (ប្រុស)" if is_male else "👩 Sreymom (ស្រី)"
+            card_class = "male-card" if is_male else "female-card"
+            pitch_str = f"{s.pitch_f0:.0f} Hz" if hasattr(s, "pitch_f0") and s.pitch_f0 else ("125 Hz" if is_male else "210 Hz")
+
+            st.markdown(
+                f"""
+                <div class="dialogue-card {card_class}">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-weight: 800; font-size: 0.95rem; color: #f8fafc;">#{s.index}</span>
+                            <span class='gender-badge {b_class}'>{g_icon}</span>
+                            <span style="font-size: 0.75rem; color: #94a3b8; font-weight: 500;">Pitch: {pitch_str}</span>
+                        </div>
+                        <div style="font-size: 0.78rem; color: #94a3b8; font-weight: 600;">
+                            ⏱️ {s.start_time.split(',')[0]} ➔ {s.end_time.split(',')[0]} ({s.duration_ms/1000:.1f}s)
+                        </div>
+                    </div>
+                    <div class='khmer-font' style='margin-bottom: 6px;'>{s.text}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            col_ctrl1, col_ctrl2 = st.columns([1, 2])
+            with col_ctrl1:
                 new_voice = "km-KH-SreymomNeural" if is_male else "km-KH-PisethNeural"
                 new_gender = "Female" if is_male else "Male"
-                toggle_lbl = "ប្តូរទៅ 👩" if is_male else "ប្តូរទៅ 👨"
-                if st.button(toggle_lbl, key=f"tgl_{s.index}"):
+                toggle_lbl = "🔄 ប្តូរទៅ 👩 Sreymom" if is_male else "🔄 ប្តូរទៅ 👨 Piseth"
+                if st.button(toggle_lbl, key=f"tgl_{s.index}", use_container_width=True):
                     s.assigned_voice = new_voice
                     s.detected_gender = new_gender
                     vtag = "sreymom" if is_male else "piseth"
@@ -1636,15 +1995,12 @@ with tab3:
                     generate_tts_clip_with_resilience(s.text, new_voice, st.session_state.selected_speed, "+0Hz", out_p)
                     st.session_state.voiceover_clips[s.index] = str(out_p)
                     st.rerun()
-
-            with col_txt:
-                st.markdown(f"<span class='khmer-font'>{s.text}</span>", unsafe_allow_html=True)
-            with col_aud:
+            with col_ctrl2:
                 clip_path = st.session_state.voiceover_clips.get(s.index)
                 if clip_path and Path(clip_path).exists():
                     st.audio(str(clip_path))
                 else:
-                    if st.button(f"Retry #{s.index}", key=f"btn_re_{s.index}"):
+                    if st.button(f"⚡ Retry Voice #{s.index}", key=f"btn_re_{s.index}", use_container_width=True):
                         vtag = "piseth" if "piseth" in s.assigned_voice.lower() else "sreymom"
                         out_p = USER_DIR / "tts_cache" / f"line_{s.index}_{vtag}.mp3"
                         ok = generate_tts_clip_with_resilience(
@@ -1737,8 +2093,25 @@ with tab4:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
             """
-            <div class="studio-card" style="border-color: rgba(16, 185, 129, 0.4);">
-                <h3 style="margin-top:0; color:#34d399;">🎧 Master Audio Player (គ្មានការនិយាយជាន់គ្នា)</h3>
+            <div class="studio-card" style="border: 1px solid rgba(52, 211, 153, 0.45); background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%);">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="font-size: 2rem;">🎧</div>
+                        <div>
+                            <h3 style="margin: 0; color: #34d399; font-family: 'Outfit', 'Kantumruy Pro', sans-serif; font-weight: 800; font-size: 1.3rem;">
+                                Master Dubbed MP3 Studio Release
+                            </h3>
+                            <span style="font-size: 0.85rem; color: #cbd5e1;">ឆ្លាស់ប្រុសស្រី • គ្មានការនិយាយជាន់គ្នា (Zero-Collision) • Synced Timeline</span>
+                        </div>
+                    </div>
+                    <div class="soundwave-box">
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                        <div class="soundwave-bar"></div>
+                    </div>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
